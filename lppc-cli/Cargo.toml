@@ -1,0 +1,45 @@
+[package]
+name = "lppc"
+version = "0.1.0"
+edition = "2024"
+description = "Least Privilege Policy Creator - Generate minimal AWS IAM policies from Terraform code"
+license = "MIT"
+repository = "https://github.com/bebold-jhr/lppc"
+
+[dependencies]
+clap = { version = "4.5.55", features = ["derive", "env"] }
+colored = "3.1.1"
+env_logger = "0.11.8"
+log = "0.4.29"
+thiserror = "2.0.18"
+anyhow = "1.0.100"
+
+# Milestone 2: Mapping repository management
+dirs = "6.0.0"
+chrono = { version = "0.4.43", default-features = false, features = ["std", "clock"] }
+sha2 = "0.10.9"
+hex = "0.4.3"
+
+# Milestone 3: Terraform execution
+which = "8.0.0"
+tempfile = "3.24.0"
+
+# Milestone 7: Isolated terraform execution
+walkdir = "2.5"
+
+# Milestone 8: External local module support
+regex = "1.12.2"
+
+# Milestone 4: Terraform JSON parsing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Milestone 5: YAML mapping parsing
+saphyr = "0.0.6"
+
+# Milestone 9: HCL parsing (replacing terraform plan dependency)
+hcl-rs = "0.19"
+
+[dev-dependencies]
+assert_cmd = "2.1.2"
+predicates = "3.1.3"
