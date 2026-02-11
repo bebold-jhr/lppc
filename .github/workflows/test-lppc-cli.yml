@@ -1,0 +1,29 @@
+name: "test lppc-cli"
+
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'lppc-cli/**/*'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - 'lppc-cli/**/*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: lppc-cli
+        working-directory: lppc-cli
+        run: |
+          cargo test --lib
+        shell: bash

@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (must match lppc-cli/Cargo.toml, e.g. 1.0.0)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate version format
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$INPUT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Version '$INPUT_VERSION' does not match semver pattern (e.g. 1.2.3 or 1.2.3-rc.1)"
+            exit 1
+          fi
+
+      - name: Validate version matches Cargo.toml
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          cargo_version=$(grep '^version' lppc-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Cargo.toml version: $cargo_version"
+          echo "Input version: $INPUT_VERSION"
+          if [ "$cargo_version" != "$INPUT_VERSION" ]; then
+            echo "::error::Version mismatch: Cargo.toml has '$cargo_version' but input version is '$INPUT_VERSION'. Update Cargo.toml first via a PR."
+            exit 1
+          fi
+
+      - name: Check for existing tag
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if git tag -l "v$INPUT_VERSION" | grep -q .; then
+            echo "::error::Tag 'v$INPUT_VERSION' already exists. Delete the tag and release before re-releasing."
+            exit 1
+          fi
+
+      - name: Check for existing release
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v$INPUT_VERSION" > /dev/null 2>&1; then
+            echo "::error::GitHub release 'v$INPUT_VERSION' already exists. Delete it before re-releasing."
+            exit 1
+          fi
+
+  build:
+    needs: validate
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: lppc-linux-x86_64
+            binary_name: lppc
+          - os: ubuntu-24.04-arm
+            artifact_name: lppc-linux-aarch64
+            binary_name: lppc
+          - os: macos-latest
+            artifact_name: lppc-macos-arm64
+            binary_name: lppc
+          - os: macos-15-intel
+            artifact_name: lppc-macos-x86_64
+            binary_name: lppc
+          - os: windows-latest
+            artifact_name: lppc-windows-x86_64.exe
+            binary_name: lppc.exe
+          - os: windows-11-arm
+            artifact_name: lppc-windows-aarch64.exe
+            binary_name: lppc.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run tests
+        working-directory: lppc-cli
+        shell: bash
+        run: cargo test --lib
+
+      - name: Build release binary
+        working-directory: lppc-cli
+        shell: bash
+        run: cargo build --release
+
+      - name: Rename binary
+        shell: bash
+        run: cp "lppc-cli/target/release/${{ matrix.binary_name }}" "${{ matrix.artifact_name }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List release artifacts
+        shell: bash
+        run: ls -la release-artifacts/
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          files: release-artifacts/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
