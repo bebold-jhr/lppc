@@ -1,3 +1,8 @@
+---
+paths:
+  - "**/Cargo.toml"
+---
+
 # Dependency Check
 
 Before adding any Rust dependency:
