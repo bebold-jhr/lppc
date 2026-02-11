@@ -86,12 +86,6 @@ jobs:
           - os: macos-15-intel
             artifact_name: lppc-macos-x86_64
             binary_name: lppc
-          - os: windows-latest
-            artifact_name: lppc-windows-x86_64.exe
-            binary_name: lppc.exe
-          - os: windows-11-arm
-            artifact_name: lppc-windows-aarch64.exe
-            binary_name: lppc.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
