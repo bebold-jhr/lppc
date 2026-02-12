@@ -1,12 +1,11 @@
 //! Output generation module for LPPC.
 //!
 //! This module handles formatting and writing permission results to various
-//! output destinations (stdout or files) in multiple formats (plain, JSON, HCL).
+//! output destinations (stdout or files) in multiple formats (JSON, HCL).
 
 pub mod formatter;
 pub mod hcl;
 pub mod json;
-pub mod plain;
 
 use std::fs;
 use std::io::{self, Write};
@@ -253,12 +252,12 @@ mod tests {
         let mut perms1 = HashSet::new();
         perms1.insert("ec2:DescribeInstances".to_string());
         perms1.insert("ec2:RunInstances".to_string());
-        permissions.insert("123456789012ComputeDeployer".to_string(), perms1);
+        permissions.insert("ComputeDeployer".to_string(), perms1);
 
         let mut perms2 = HashSet::new();
         perms2.insert("s3:CreateBucket".to_string());
         perms2.insert("s3:DeleteBucket".to_string());
-        permissions.insert("123456789012StorageDeployer".to_string(), perms2);
+        permissions.insert("StorageDeployer".to_string(), perms2);
 
         PermissionResult {
             permissions,
@@ -279,8 +278,8 @@ mod tests {
         writer.write(&result).unwrap();
 
         // Check that files were created
-        let compute_file = temp_dir.path().join("123456789012ComputeDeployer.json");
-        let storage_file = temp_dir.path().join("123456789012StorageDeployer.json");
+        let compute_file = temp_dir.path().join("ComputeDeployer.json");
+        let storage_file = temp_dir.path().join("StorageDeployer.json");
 
         assert!(compute_file.exists());
         assert!(storage_file.exists());
@@ -298,32 +297,12 @@ mod tests {
 
         assert!(!nested_dir.exists());
 
-        let writer = OutputWriter::new(OutputFormat::Plain, Some(nested_dir.clone()), true);
+        let writer = OutputWriter::new(OutputFormat::HclGrouped, Some(nested_dir.clone()), true);
         let result = create_test_result();
 
         writer.write(&result).unwrap();
 
         assert!(nested_dir.exists());
-    }
-
-    #[test]
-    fn write_plain_format_creates_txt_files() {
-        let temp_dir = TempDir::new().unwrap();
-        let writer = OutputWriter::new(
-            OutputFormat::Plain,
-            Some(temp_dir.path().to_path_buf()),
-            true,
-        );
-        let result = create_test_result();
-
-        writer.write(&result).unwrap();
-
-        let compute_file = temp_dir.path().join("123456789012ComputeDeployer.txt");
-        assert!(compute_file.exists());
-
-        let content = fs::read_to_string(&compute_file).unwrap();
-        assert!(content.contains("ec2:DescribeInstances"));
-        assert!(content.contains("ec2:RunInstances"));
     }
 
     #[test]
@@ -335,7 +314,7 @@ mod tests {
 
         writer.write(&result).unwrap();
 
-        let compute_file = temp_dir.path().join("123456789012ComputeDeployer.hcl");
+        let compute_file = temp_dir.path().join("ComputeDeployer.hcl");
         assert!(compute_file.exists());
 
         let content = fs::read_to_string(&compute_file).unwrap();
@@ -346,7 +325,7 @@ mod tests {
     fn write_directory_files_have_no_headers() {
         let temp_dir = TempDir::new().unwrap();
         let writer = OutputWriter::new(
-            OutputFormat::Plain,
+            OutputFormat::HclGrouped,
             Some(temp_dir.path().to_path_buf()),
             true,
         );
@@ -354,7 +333,7 @@ mod tests {
 
         writer.write(&result).unwrap();
 
-        let compute_file = temp_dir.path().join("123456789012ComputeDeployer.txt");
+        let compute_file = temp_dir.path().join("ComputeDeployer.hcl");
         let content = fs::read_to_string(&compute_file).unwrap();
 
         // File should NOT contain the header
@@ -372,7 +351,7 @@ mod tests {
             }],
         };
 
-        let writer = OutputWriter::new(OutputFormat::Plain, None, true);
+        let writer = OutputWriter::new(OutputFormat::HclGrouped, None, true);
 
         // This writes to stderr, which is hard to capture in tests
         // Just verify it doesn't panic
@@ -386,7 +365,7 @@ mod tests {
             missing_mappings: Vec::new(),
         };
 
-        let writer = OutputWriter::new(OutputFormat::Plain, None, true);
+        let writer = OutputWriter::new(OutputFormat::HclGrouped, None, true);
 
         // Should not panic or produce output
         writer.write_missing_mappings(&result);
@@ -459,8 +438,8 @@ mod tests {
     #[test]
     fn sanitize_filename_accepts_valid_names() {
         assert_eq!(
-            super::sanitize_filename("123456789012NetworkDeployer"),
-            Some("123456789012NetworkDeployer".to_string())
+            super::sanitize_filename("NetworkDeployer"),
+            Some("NetworkDeployer".to_string())
         );
         assert_eq!(
             super::sanitize_filename("MyRole-Deployer"),
@@ -472,7 +451,7 @@ mod tests {
     fn write_rejects_path_traversal_in_output_name() {
         let temp_dir = TempDir::new().unwrap();
         let writer = OutputWriter::new(
-            OutputFormat::Plain,
+            OutputFormat::HclGrouped,
             Some(temp_dir.path().to_path_buf()),
             true,
         );
@@ -492,7 +471,7 @@ mod tests {
 
         // Verify no files were written outside the directory
         let parent = temp_dir.path().parent().unwrap();
-        let malicious_file = parent.join("malicious.txt");
+        let malicious_file = parent.join("malicious.hcl");
         assert!(!malicious_file.exists());
     }
 }

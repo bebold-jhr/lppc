@@ -30,8 +30,8 @@ pub struct Cli {
     #[arg(short = 'o', long = "output-dir")]
     pub output_dir: Option<PathBuf>,
 
-    /// Output format: plain, json, json-grouped, hcl, hcl-grouped
-    #[arg(short = 'f', long = "output-format", default_value = "plain")]
+    /// Output format: json, json-grouped, hcl, hcl-grouped
+    #[arg(short = 'f', long = "output-format", default_value = "hcl-grouped")]
     pub output_format: OutputFormat,
 
     /// URL of the git repository containing mapping files
@@ -49,10 +49,9 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputFormat {
-    #[default]
-    Plain,
     Json,
     JsonGrouped,
     Hcl,
+    #[default]
     HclGrouped,
 }

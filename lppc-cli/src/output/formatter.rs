@@ -39,10 +39,8 @@ pub trait OutputFormatter {
 pub fn create_formatter(format: OutputFormat) -> Box<dyn OutputFormatter> {
     use super::hcl::HclFormatter;
     use super::json::JsonFormatter;
-    use super::plain::PlainFormatter;
 
     match format {
-        OutputFormat::Plain => Box::new(PlainFormatter),
         OutputFormat::Json => Box::new(JsonFormatter { grouped: false }),
         OutputFormat::JsonGrouped => Box::new(JsonFormatter { grouped: true }),
         OutputFormat::Hcl => Box::new(HclFormatter { grouped: false }),

@@ -98,7 +98,7 @@ impl ModuleContext {
 #[derive(Debug)]
 pub struct TerraformConfig {
     /// Map of role identifier to the set of terraform blocks using that role
-    /// Key: Output name (e.g., "123456789012NetworkDeployer")
+    /// Key: Output name (e.g., "NetworkDeployer")
     /// Value: ProviderGroup containing all blocks for that role
     pub provider_groups: HashMap<String, ProviderGroup>,
 

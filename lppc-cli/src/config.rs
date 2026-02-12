@@ -85,7 +85,7 @@ mod tests {
             verbose: false,
             working_dir: None,
             output_dir: None,
-            output_format: OutputFormat::Plain,
+            output_format: OutputFormat::HclGrouped,
             mappings_url: "https://github.com/bebold-jhr/lppc-aws-test".to_string(),
             refresh_mappings: false,
         };
@@ -96,7 +96,7 @@ mod tests {
         assert!(!config.verbose);
         assert!(config.working_dir.exists());
         assert!(config.output_dir.is_none());
-        assert_eq!(config.output_format, OutputFormat::Plain);
+        assert_eq!(config.output_format, OutputFormat::HclGrouped);
         assert_eq!(
             config.mappings_url,
             "https://github.com/bebold-jhr/lppc-aws-test"
@@ -133,7 +133,6 @@ mod tests {
     #[test]
     fn from_cli_all_output_formats() {
         let formats = [
-            OutputFormat::Plain,
             OutputFormat::Json,
             OutputFormat::JsonGrouped,
             OutputFormat::Hcl,
@@ -163,7 +162,7 @@ mod tests {
             verbose: false,
             working_dir: Some(PathBuf::from("/nonexistent/path/that/does/not/exist")),
             output_dir: None,
-            output_format: OutputFormat::Plain,
+            output_format: OutputFormat::HclGrouped,
             mappings_url: "https://example.com".to_string(),
             refresh_mappings: false,
         };
@@ -185,7 +184,7 @@ mod tests {
             verbose: false,
             working_dir: Some(file_path),
             output_dir: None,
-            output_format: OutputFormat::Plain,
+            output_format: OutputFormat::HclGrouped,
             mappings_url: "https://example.com".to_string(),
             refresh_mappings: false,
         };

@@ -134,9 +134,8 @@ The project name is `lppc` which stands for `least privilege policy creator`.
 + Use colors and formatting to make an appealing and easy to read CLI application
 + Parameter `--working-dir` (short `-d`) Can take an absolute path or a relative path to change the directory from the default (see section "Working directory").
 + Parameter `--no-color` (short `-n`) Suppress the usage of colors for better readability in environments like CICD pipeline runners.
-+ Parameter `--output-dir` (short `-o`) Define an absolute path or a relative path to an output directory. If the parameter has not been set, the output will be shown directly on stdout. When set, one file per role is created in the specified directory with the naming pattern `{OUTPUT_NAME}.{EXTENSION}` (e.g., `NetworkDeployer.json`). The extension is determined by the output format: `.txt` for plain, `.json` for json/json-grouped, `.hcl` for hcl/hcl-grouped. If the directory does not exist, it will be created automatically. The info regarding missing mappings is solely shown on stderr.
-+ Parameter `--output-format` (short `-f`) Defines the format of the output. Default is `plain`. The following are supported:
-    `plain`: Each permission is a new line. No additional formatting.
++ Parameter `--output-dir` (short `-o`) Define an absolute path or a relative path to an output directory. If the parameter has not been set, the output will be shown directly on stdout. When set, one file per role is created in the specified directory with the naming pattern `{OUTPUT_NAME}.{EXTENSION}` (e.g., `NetworkDeployer.json`). The extension is determined by the output format: `.json` for json/json-grouped, `.hcl` for hcl/hcl-grouped. If the directory does not exist, it will be created automatically. The info regarding missing mappings is solely shown on stderr.
++ Parameter `--output-format` (short `-f`) Defines the format of the output. Default is `hcl-grouped`. The following are supported:
     `json`: JSON format of an AWS policy document. Permissions are listed in alphabetical order.
     `json-grouped`: Like `json`, but each service prefix (`ec2`, `s3`,...) gets its own `statement` block.
     `hcl`: AWS policy document represented in HCL using `jsonencode()`. Permissions are in alphabetical order.
@@ -296,20 +295,6 @@ Examples:
 
 This approach was chosen because `role_arn` values often contain Terraform variables (e.g., `var.account_id`) that cannot be resolved during static analysis. Using the alias provides a stable, meaningful name without requiring variable resolution.
 
-### plain
-
-Just one permission per line. Each result block starts with a header like this:
-`----------- {OUTPUT_NAME} -----------`
-
-Example:
-```
------------ DnsAccountDeployer -----------
-organizations:DescribeOrganization
------------ DefaultDeployer -----------
-ec2:DescribeAvailabilityZones
-s3:CreateBucket
-```
-
 ### JSON/HCL formats
 
 + We don't set the `Sid`.
@@ -439,15 +424,15 @@ This is explicitly called out in the `--help` output as a disclaimer.
 
 **Rationale:** It was omitted for simplicity. The context is selective and should provide enough information.
 
-## Output formats: plain, json, json-grouped, hcl, hcl-grouped
+## Output formats: json, json-grouped, hcl, hcl-grouped
 
-**Decision:** Support five output formats with two grouping strategies (flat vs. grouped by service prefix).
+**Decision:** Support four output formats with two grouping strategies (flat vs. grouped by service prefix). Default is `hcl-grouped`.
 
 **Rationale:**
-- **plain**: Simple list for quick review or very custom (maybe manual) workflows.
 - **json/json-grouped**: Direct use in AWS IAM policies or Terraform `aws_iam_policy_document` data sources
 - **hcl/hcl-grouped**: Inline in Terraform configurations using `jsonencode()`
 - **Grouped variants**: Improve readability for large permission sets by organizing statements by service (ec2, s3, etc.)
+- **hcl-grouped as default**: The primary use case is within Terraform configurations, and grouped output is more readable.
 
 ## 10MB file size limit
 

@@ -137,12 +137,22 @@ fn test_verbose_with_no_color() {
 }
 
 #[test]
-fn test_output_format_default_plain() {
+fn test_output_format_default_hcl_grouped() {
     Command::cargo_bin("lppc")
         .unwrap()
         .args(["--mappings-url", TEST_REPO_URL])
         .assert()
         .success();
+}
+
+#[test]
+fn test_output_format_invalid_value_is_rejected() {
+    Command::cargo_bin("lppc")
+        .unwrap()
+        .args(["--output-format", "plain", "--mappings-url", TEST_REPO_URL])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value"));
 }
 
 #[test]

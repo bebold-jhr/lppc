@@ -35,7 +35,7 @@ This will:
 1. Clone or update the default mapping repository (cached in `~/.lppc/`)
 2. Copy files to an isolated temp directory and run `terraform init -backend=false` to resolve modules
 3. Parse Terraform files directly using HCL parsing (no AWS credentials required)
-4. Output the required IAM permissions as a plain text list to stdout
+4. Output the required IAM permissions in HCL grouped format to stdout
 
 ## Parameters
 
@@ -133,16 +133,15 @@ lppc --verbose --working-dir ./terraform --refresh-mappings --no-color
 
 | Parameter         | Short | Default  | Description                                                          |
 |-------------------|-------|----------|----------------------------------------------------------------------|
-| `--output-format` | `-f`  | `plain`  | Output format: `plain`, `json`, `json-grouped`, `hcl`, `hcl-grouped` |
+| `--output-format` | `-f`  | `hcl-grouped` | Output format: `json`, `json-grouped`, `hcl`, `hcl-grouped` |
 | `--output-dir`    | `-o`  | (stdout) | Directory to write output files (one file per deployer role)         |
 
 #### Output Formats
 
-- **plain**: One permission per line, sorted alphabetically
 - **json**: AWS IAM policy document in JSON format
 - **json-grouped**: AWS IAM policy with statements grouped by service prefix
 - **hcl**: Terraform HCL with `jsonencode()` for inline policies
-- **hcl-grouped**: HCL format with statements grouped by service prefix
+- **hcl-grouped**: HCL format with statements grouped by service prefix (default)
 
 #### Examples
 
