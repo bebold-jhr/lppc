@@ -57,6 +57,16 @@ impl Action {
     }
 }
 
+pub struct SelectedActions {
+    pub allow_indices: HashSet<usize>,
+    pub deny_indices: HashSet<usize>,
+}
+
+pub struct ComputedActions {
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ServiceActions {
     #[serde(rename = "Name")]
@@ -104,9 +114,13 @@ pub fn get_preselected_indices(actions: &[Action]) -> Vec<usize> {
 pub fn compute_selected_actions(
     service_prefix: &str,
     all_actions: &[Action],
-    selected_indices: &HashSet<usize>,
-) -> Vec<String> {
-    let mut result = Vec::new();
+    allow_indices: &HashSet<usize>,
+    deny_indices: &HashSet<usize>,
+) -> ComputedActions {
+    debug_assert!(
+        allow_indices.is_disjoint(deny_indices),
+        "allow_indices and deny_indices must be disjoint"
+    );
 
     let list_actions: Vec<usize> = all_actions
         .iter()
@@ -129,46 +143,62 @@ pub fn compute_selected_actions(
         .map(|(i, _)| i)
         .collect();
 
-    let all_list_selected = list_actions.len() > 1
-        && list_actions.iter().all(|i| selected_indices.contains(i));
-    let all_describe_selected = describe_actions.len() > 1
+    // Wildcard for allow: use wildcard if no action in the group is deselected
+    // (i.e., every action is in either allow or deny). Moving to deny does NOT break the wildcard.
+    let no_list_deselected = list_actions.len() > 1
+        && list_actions
+            .iter()
+            .all(|i| allow_indices.contains(i) || deny_indices.contains(i));
+    let no_describe_deselected = describe_actions.len() > 1
         && describe_actions
             .iter()
-            .all(|i| selected_indices.contains(i));
-    let all_get_selected =
-        get_actions.len() > 1 && get_actions.iter().all(|i| selected_indices.contains(i));
+            .all(|i| allow_indices.contains(i) || deny_indices.contains(i));
+    let no_get_deselected = get_actions.len() > 1
+        && get_actions
+            .iter()
+            .all(|i| allow_indices.contains(i) || deny_indices.contains(i));
 
-    if all_list_selected {
-        result.push(format!("{}:List*", service_prefix));
+    // Build allow list with wildcard consolidation
+    let mut allow_result = Vec::new();
+
+    if no_list_deselected {
+        allow_result.push(format!("{}:List*", service_prefix));
+    }
+    if no_describe_deselected {
+        allow_result.push(format!("{}:Describe*", service_prefix));
+    }
+    if no_get_deselected {
+        allow_result.push(format!("{}:Get*", service_prefix));
     }
 
-    if all_describe_selected {
-        result.push(format!("{}:Describe*", service_prefix));
-    }
-
-    if all_get_selected {
-        result.push(format!("{}:Get*", service_prefix));
-    }
-
-    for index in selected_indices {
-        let action = &all_actions[*index];
-
+    for &index in allow_indices {
+        let action = &all_actions[index];
         let is_list = action.name.starts_with("List");
         let is_describe = action.name.starts_with("Describe");
         let is_get = action.name.starts_with("Get");
 
-        if (is_list && all_list_selected)
-            || (is_describe && all_describe_selected)
-            || (is_get && all_get_selected)
+        if (is_list && no_list_deselected)
+            || (is_describe && no_describe_deselected)
+            || (is_get && no_get_deselected)
         {
             continue;
         }
 
-        result.push(format!("{}:{}", service_prefix, action.name));
+        allow_result.push(format!("{}:{}", service_prefix, action.name));
     }
+    allow_result.sort();
 
-    result.sort();
-    result
+    // Build deny list: always individual actions, never wildcards
+    let mut deny_result: Vec<String> = deny_indices
+        .iter()
+        .map(|&index| format!("{}:{}", service_prefix, all_actions[index].name))
+        .collect();
+    deny_result.sort();
+
+    ComputedActions {
+        allow: allow_result,
+        deny: deny_result,
+    }
 }
 
 #[cfg(test)]
@@ -319,19 +349,20 @@ mod tests {
     }
 
     #[test]
-    fn compute_selected_actions_uses_wildcard_when_all_selected() {
+    fn compute_selected_actions_uses_wildcard_when_all_allowed() {
         let actions = vec![
             create_test_action("ListSubnets", false),
             create_test_action("ListVpcs", false),
             create_test_action("CreateSubnet", false),
         ];
 
-        let selected: HashSet<usize> = [0, 1].into_iter().collect();
-        let result = compute_selected_actions("ec2", &actions, &selected);
+        let allow: HashSet<usize> = [0, 1].into_iter().collect();
+        let deny: HashSet<usize> = HashSet::new();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
 
-        assert!(result.contains(&"ec2:List*".to_string()));
-        assert!(!result.iter().any(|s| s.contains("ListSubnets")));
-        assert!(!result.iter().any(|s| s.contains("ListVpcs")));
+        assert!(result.allow.contains(&"ec2:List*".to_string()));
+        assert!(!result.allow.iter().any(|s| s.contains("ListSubnets")));
+        assert!(!result.allow.iter().any(|s| s.contains("ListVpcs")));
     }
 
     #[test]
@@ -342,11 +373,12 @@ mod tests {
             create_test_action("CreateSubnet", false),
         ];
 
-        let selected: HashSet<usize> = [0].into_iter().collect();
-        let result = compute_selected_actions("ec2", &actions, &selected);
+        let allow: HashSet<usize> = [0].into_iter().collect();
+        let deny: HashSet<usize> = HashSet::new();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
 
-        assert!(!result.contains(&"ec2:List*".to_string()));
-        assert!(result.contains(&"ec2:ListSubnets".to_string()));
+        assert!(!result.allow.contains(&"ec2:List*".to_string()));
+        assert!(result.allow.contains(&"ec2:ListSubnets".to_string()));
     }
 
     #[test]
@@ -359,12 +391,13 @@ mod tests {
             create_test_action("GetSubnetCidr", false),
         ];
 
-        let selected: HashSet<usize> = [0, 1, 2, 3, 4].into_iter().collect();
-        let result = compute_selected_actions("ec2", &actions, &selected);
+        let allow: HashSet<usize> = [0, 1, 2, 3, 4].into_iter().collect();
+        let deny: HashSet<usize> = HashSet::new();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
 
-        assert!(result.contains(&"ec2:List*".to_string()));
-        assert!(result.contains(&"ec2:Describe*".to_string()));
-        assert!(result.contains(&"ec2:GetSubnetCidr".to_string()));
+        assert!(result.allow.contains(&"ec2:List*".to_string()));
+        assert!(result.allow.contains(&"ec2:Describe*".to_string()));
+        assert!(result.allow.contains(&"ec2:GetSubnetCidr".to_string()));
     }
 
     #[test]
@@ -375,12 +408,13 @@ mod tests {
             create_test_action("CreateTags", true),
         ];
 
-        let selected: HashSet<usize> = [0, 2].into_iter().collect();
-        let result = compute_selected_actions("ec2", &actions, &selected);
+        let allow: HashSet<usize> = [0, 2].into_iter().collect();
+        let deny: HashSet<usize> = HashSet::new();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
 
-        assert!(result.contains(&"ec2:CreateSubnet".to_string()));
-        assert!(result.contains(&"ec2:CreateTags".to_string()));
-        assert!(!result.contains(&"ec2:DeleteSubnet".to_string()));
+        assert!(result.allow.contains(&"ec2:CreateSubnet".to_string()));
+        assert!(result.allow.contains(&"ec2:CreateTags".to_string()));
+        assert!(!result.allow.contains(&"ec2:DeleteSubnet".to_string()));
     }
 
     #[test]
@@ -390,10 +424,110 @@ mod tests {
             create_test_action("ListSubnets", false),
         ];
 
-        let selected: HashSet<usize> = HashSet::new();
-        let result = compute_selected_actions("ec2", &actions, &selected);
+        let allow: HashSet<usize> = HashSet::new();
+        let deny: HashSet<usize> = HashSet::new();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
 
-        assert!(result.is_empty());
+        assert!(result.allow.is_empty());
+        assert!(result.deny.is_empty());
+    }
+
+    #[test]
+    fn compute_deny_only_produces_individual_actions() {
+        let actions = vec![
+            create_test_action("CreateSubnet", false),
+            create_test_action("DeleteSubnet", false),
+            create_test_action("ListSubnets", false),
+        ];
+
+        let allow: HashSet<usize> = HashSet::new();
+        let deny: HashSet<usize> = [0, 1].into_iter().collect();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
+
+        assert!(result.allow.is_empty());
+        assert_eq!(result.deny.len(), 2);
+        assert!(result.deny.contains(&"ec2:CreateSubnet".to_string()));
+        assert!(result.deny.contains(&"ec2:DeleteSubnet".to_string()));
+    }
+
+    #[test]
+    fn wildcard_in_allow_when_some_denied_but_none_deselected() {
+        let actions = vec![
+            create_test_action("ListSubnets", false),
+            create_test_action("ListVpcs", false),
+            create_test_action("CreateSubnet", false),
+        ];
+
+        // ListSubnets in allow, ListVpcs in deny -> none deselected -> wildcard in allow
+        let allow: HashSet<usize> = [0].into_iter().collect();
+        let deny: HashSet<usize> = [1].into_iter().collect();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
+
+        assert!(result.allow.contains(&"ec2:List*".to_string()));
+        assert!(!result.allow.iter().any(|s| s.contains("ListSubnets")));
+        assert!(result.deny.contains(&"ec2:ListVpcs".to_string()));
+    }
+
+    #[test]
+    fn wildcard_breaks_when_action_deselected() {
+        let actions = vec![
+            create_test_action("ListSubnets", false),
+            create_test_action("ListVpcs", false),
+            create_test_action("ListRouteTables", false),
+        ];
+
+        // ListSubnets in allow, ListVpcs in deny, ListRouteTables deselected -> no wildcard
+        let allow: HashSet<usize> = [0].into_iter().collect();
+        let deny: HashSet<usize> = [1].into_iter().collect();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
+
+        assert!(!result.allow.contains(&"ec2:List*".to_string()));
+        assert!(result.allow.contains(&"ec2:ListSubnets".to_string()));
+        assert!(result.deny.contains(&"ec2:ListVpcs".to_string()));
+    }
+
+    #[test]
+    fn deny_never_produces_wildcards() {
+        let actions = vec![
+            create_test_action("ListSubnets", false),
+            create_test_action("ListVpcs", false),
+        ];
+
+        // All List actions in deny
+        let allow: HashSet<usize> = HashSet::new();
+        let deny: HashSet<usize> = [0, 1].into_iter().collect();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
+
+        assert!(!result.deny.contains(&"ec2:List*".to_string()));
+        assert!(result.deny.contains(&"ec2:ListSubnets".to_string()));
+        assert!(result.deny.contains(&"ec2:ListVpcs".to_string()));
+    }
+
+    #[test]
+    fn mixed_allow_deny_across_wildcard_groups() {
+        let actions = vec![
+            create_test_action("ListSubnets", false),
+            create_test_action("ListVpcs", false),
+            create_test_action("DescribeSubnets", false),
+            create_test_action("DescribeVpcs", false),
+            create_test_action("GetSubnetCidr", false),
+            create_test_action("CreateSubnet", false),
+        ];
+
+        // All List in allow/deny (none deselected) -> List* wildcard in allow
+        // DescribeSubnets in allow, DescribeVpcs deselected -> no Describe wildcard
+        // GetSubnetCidr only one -> no Get wildcard (needs len > 1)
+        let allow: HashSet<usize> = [0, 2, 4, 5].into_iter().collect();
+        let deny: HashSet<usize> = [1].into_iter().collect();
+        let result = compute_selected_actions("ec2", &actions, &allow, &deny);
+
+        assert!(result.allow.contains(&"ec2:List*".to_string()));
+        assert!(!result.allow.contains(&"ec2:Describe*".to_string()));
+        assert!(result.allow.contains(&"ec2:DescribeSubnets".to_string()));
+        assert!(result.allow.contains(&"ec2:GetSubnetCidr".to_string()));
+        assert!(result.allow.contains(&"ec2:CreateSubnet".to_string()));
+        assert!(result.deny.contains(&"ec2:ListVpcs".to_string()));
+        assert_eq!(result.deny.len(), 1);
     }
 
     #[test]

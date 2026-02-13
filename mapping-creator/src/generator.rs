@@ -22,7 +22,8 @@ pub struct GeneratorConfig<'a> {
     pub block_type: BlockType,
     pub terraform_type: &'a str,
     pub service_reference_url: &'a str,
-    pub actions: Vec<String>,
+    pub allow_actions: Vec<String>,
+    pub deny_actions: Vec<String>,
 }
 
 pub fn generate_files(config: &GeneratorConfig) -> Result<GeneratedFiles> {
@@ -70,7 +71,8 @@ fn generate_mapping_file(config: &GeneratorConfig) -> Result<String> {
         AWS_DOCUMENTATION_URL,
         config.service_reference_url,
         &terraform_doc_url,
-        &config.actions,
+        &config.allow_actions,
+        &config.deny_actions,
     );
 
     fs::write(&mapping_file, &yaml_content)
@@ -104,7 +106,8 @@ fn generate_mapping_yaml(
     aws_documentation: &str,
     service_reference: &str,
     terraform_documentation: &str,
-    actions: &[String],
+    allow_actions: &[String],
+    deny_actions: &[String],
 ) -> String {
     let mut yaml = String::new();
     yaml.push_str("---\n");
@@ -114,9 +117,17 @@ fn generate_mapping_yaml(
     yaml.push_str(&format!("    service-reference: {}\n", service_reference));
     yaml.push_str("  terraform:\n");
     yaml.push_str(&format!("    documentation: {}\n", terraform_documentation));
-    yaml.push_str("actions:\n");
-    for action in actions {
-        yaml.push_str(&format!("  - {}\n", action));
+    if !deny_actions.is_empty() {
+        yaml.push_str("deny:\n");
+        for action in deny_actions {
+            yaml.push_str(&format!("  - {}\n", action));
+        }
+    }
+    if !allow_actions.is_empty() {
+        yaml.push_str("allow:\n");
+        for action in allow_actions {
+            yaml.push_str(&format!("  - {}\n", action));
+        }
     }
     yaml
 }
@@ -347,7 +358,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_subnet",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:List*".to_string(), "ec2:CreateSubnet".to_string()],
+            allow_actions: vec!["ec2:List*".to_string(), "ec2:CreateSubnet".to_string()],
+            deny_actions: vec![],
         };
 
         let result = generate_files(&config);
@@ -371,7 +383,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_subnet",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateSubnet".to_string()],
+            allow_actions: vec!["ec2:CreateSubnet".to_string()],
+            deny_actions: vec![],
         };
 
         let result = generate_files(&config);
@@ -398,7 +411,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_subnet",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateSubnet".to_string()],
+            allow_actions: vec!["ec2:CreateSubnet".to_string()],
+            deny_actions: vec![],
         };
 
         let result = generate_files(&config);
@@ -416,7 +430,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_vpc",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateVpc".to_string()],
+            allow_actions: vec!["ec2:CreateVpc".to_string()],
+            deny_actions: vec![],
         };
 
         generate_files(&config).unwrap();
@@ -441,7 +456,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_vpc",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateVpc".to_string()],
+            allow_actions: vec!["ec2:CreateVpc".to_string()],
+            deny_actions: vec![],
         };
 
         generate_files(&config).unwrap();
@@ -463,7 +479,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_vpc",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateVpc".to_string()],
+            allow_actions: vec!["ec2:CreateVpc".to_string()],
+            deny_actions: vec![],
         };
 
         generate_files(&config).unwrap();
@@ -485,7 +502,8 @@ mod tests {
             block_type: BlockType::Data,
             terraform_type: "aws_ami",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:DescribeImages".to_string()],
+            allow_actions: vec!["ec2:DescribeImages".to_string()],
+            deny_actions: vec![],
         };
 
         generate_files(&config).unwrap();
@@ -507,7 +525,8 @@ mod tests {
             block_type: BlockType::Ephemeral,
             terraform_type: "aws_secretsmanager_secret_version",
             service_reference_url: "https://example.com/secretsmanager.json",
-            actions: vec!["secretsmanager:GetSecretValue".to_string()],
+            allow_actions: vec!["secretsmanager:GetSecretValue".to_string()],
+            deny_actions: vec![],
         };
 
         generate_files(&config).unwrap();
@@ -534,7 +553,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_vpc",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateVpc".to_string()],
+            allow_actions: vec!["ec2:CreateVpc".to_string()],
+            deny_actions: vec![],
         };
 
         generate_files(&config).unwrap();
@@ -560,7 +580,8 @@ mod tests {
             block_type: BlockType::Data,
             terraform_type: "aws_ami",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:DescribeImages".to_string()],
+            allow_actions: vec!["ec2:DescribeImages".to_string()],
+            deny_actions: vec![],
         };
 
         let result = generate_files(&config).unwrap();
@@ -599,7 +620,8 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "../../../etc/passwd",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:CreateSubnet".to_string()],
+            allow_actions: vec!["ec2:CreateSubnet".to_string()],
+            deny_actions: vec![],
         };
 
         let result = generate_files(&config);
@@ -622,12 +644,70 @@ mod tests {
             block_type: BlockType::Resource,
             terraform_type: "aws_instance",
             service_reference_url: "https://example.com/ec2.json",
-            actions: vec!["ec2:RunInstances".to_string()],
+            allow_actions: vec!["ec2:RunInstances".to_string()],
+            deny_actions: vec![],
         };
 
         let result = generate_files(&config);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("already exists"));
+    }
+
+    #[test]
+    fn generate_yaml_with_both_allow_and_deny() {
+        let yaml = generate_mapping_yaml(
+            "https://docs.aws.amazon.com",
+            "https://example.com/ec2.json",
+            "https://registry.terraform.io/docs/resources/subnet",
+            &["ec2:List*".to_string(), "ec2:CreateSubnet".to_string()],
+            &["ec2:DeleteSubnet".to_string()],
+        );
+
+        assert!(yaml.contains("deny:\n  - ec2:DeleteSubnet\n"));
+        assert!(yaml.contains("allow:\n  - ec2:List*\n  - ec2:CreateSubnet\n"));
+    }
+
+    #[test]
+    fn generate_yaml_with_only_allow() {
+        let yaml = generate_mapping_yaml(
+            "https://docs.aws.amazon.com",
+            "https://example.com/ec2.json",
+            "https://registry.terraform.io/docs/resources/subnet",
+            &["ec2:CreateSubnet".to_string()],
+            &[],
+        );
+
+        assert!(yaml.contains("allow:\n"));
+        assert!(!yaml.contains("deny:"));
+    }
+
+    #[test]
+    fn generate_yaml_with_only_deny() {
+        let yaml = generate_mapping_yaml(
+            "https://docs.aws.amazon.com",
+            "https://example.com/ec2.json",
+            "https://registry.terraform.io/docs/resources/subnet",
+            &[],
+            &["ec2:DeleteSubnet".to_string()],
+        );
+
+        assert!(yaml.contains("deny:\n"));
+        assert!(!yaml.contains("allow:"));
+    }
+
+    #[test]
+    fn deny_section_appears_before_allow_section() {
+        let yaml = generate_mapping_yaml(
+            "https://docs.aws.amazon.com",
+            "https://example.com/ec2.json",
+            "https://registry.terraform.io/docs/resources/subnet",
+            &["ec2:CreateSubnet".to_string()],
+            &["ec2:DeleteSubnet".to_string()],
+        );
+
+        let deny_pos = yaml.find("deny:").expect("deny: section not found");
+        let allow_pos = yaml.find("allow:").expect("allow: section not found");
+        assert!(deny_pos < allow_pos, "deny: must appear before allow:");
     }
 }

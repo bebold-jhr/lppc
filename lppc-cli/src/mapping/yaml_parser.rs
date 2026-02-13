@@ -1,14 +1,14 @@
 //! YAML parser for mapping files.
 //!
 //! This module parses YAML mapping files into `ActionMapping` structures using
-//! the saphyr YAML library. It handles the recursive `optional` structure that
+//! the saphyr YAML library. It handles the recursive `conditional` structure that
 //! can nest to arbitrary depth.
 
 use saphyr::{LoadableYamlNode, Yaml};
 use std::collections::HashMap;
 use thiserror::Error;
 
-use super::schema::{ActionMapping, OptionalActions};
+use super::schema::{ActionMapping, ConditionalActions};
 
 /// Errors that can occur during YAML parsing.
 #[derive(Debug, Error)]
@@ -31,7 +31,8 @@ pub enum ParseError {
 ///
 /// # Returns
 ///
-/// An `ActionMapping` containing the required actions and optional actions structure.
+/// An `ActionMapping` containing the allow actions, deny actions, and conditional
+/// actions structure.
 ///
 /// # Errors
 ///
@@ -41,16 +42,19 @@ pub enum ParseError {
 ///
 /// ```ignore
 /// let yaml = r#"
-/// actions:
+/// allow:
 ///   - "s3:CreateBucket"
 ///   - "s3:DeleteBucket"
-/// optional:
+/// deny:
+///   - "s3:GetObject"
+/// conditional:
 ///   tags:
 ///     - "s3:PutBucketTagging"
 /// "#;
 ///
 /// let mapping = parse_mapping(yaml).unwrap();
-/// assert_eq!(mapping.actions.len(), 2);
+/// assert_eq!(mapping.allow.len(), 2);
+/// assert_eq!(mapping.deny.len(), 1);
 /// ```
 pub fn parse_mapping(content: &str) -> Result<ActionMapping, ParseError> {
     let docs = Yaml::load_from_str(content).map_err(|e| ParseError::Yaml(e.to_string()))?;
@@ -66,19 +70,24 @@ pub fn parse_mapping(content: &str) -> Result<ActionMapping, ParseError> {
         ParseError::InvalidStructure("Root document must be a mapping".to_string())
     })?;
 
-    // Parse 'actions' field (required, but defaults to empty)
-    let actions = parse_actions_from_mapping(mapping);
+    let allow = parse_string_list_from_mapping(mapping, "allow");
+    let deny = parse_string_list_from_mapping(mapping, "deny");
+    let conditional = parse_conditional_from_mapping(mapping)?;
 
-    // Parse 'optional' field (recursive structure)
-    let optional = parse_optional_from_mapping(mapping)?;
-
-    Ok(ActionMapping { actions, optional })
+    Ok(ActionMapping {
+        allow,
+        deny,
+        conditional,
+    })
 }
 
-/// Parses the 'actions' array from a YAML mapping.
-fn parse_actions_from_mapping(mapping: &saphyr::Mapping) -> Vec<String> {
-    for (key, value) in mapping {
-        if key.as_str() == Some("actions") {
+/// Parses a string list from a YAML mapping under the given key.
+///
+/// This shared helper is used for both the `allow` and `deny` keys,
+/// which have identical parsing logic.
+fn parse_string_list_from_mapping(mapping: &saphyr::Mapping, key: &str) -> Vec<String> {
+    for (k, value) in mapping {
+        if k.as_str() == Some(key) {
             if let Some(arr) = value.as_sequence() {
                 return arr
                     .iter()
@@ -90,34 +99,36 @@ fn parse_actions_from_mapping(mapping: &saphyr::Mapping) -> Vec<String> {
     Vec::new()
 }
 
-/// Parses the 'optional' structure from a YAML mapping.
-fn parse_optional_from_mapping(mapping: &saphyr::Mapping) -> Result<OptionalActions, ParseError> {
+/// Parses the 'conditional' structure from a YAML mapping.
+fn parse_conditional_from_mapping(
+    mapping: &saphyr::Mapping,
+) -> Result<ConditionalActions, ParseError> {
     for (key, value) in mapping {
-        if key.as_str() == Some("optional") {
-            return parse_optional_actions(value);
+        if key.as_str() == Some("conditional") {
+            return parse_conditional_actions(value);
         }
     }
-    Ok(OptionalActions::None)
+    Ok(ConditionalActions::None)
 }
 
-/// Recursively parses the optional actions structure.
+/// Recursively parses the conditional actions structure.
 ///
-/// The optional structure can be:
+/// The conditional structure can be:
 /// - An array of strings (leaf node with actions)
 /// - A hash/map of nested structures
-/// - Null/missing (no optional actions)
-fn parse_optional_actions(yaml: &Yaml) -> Result<OptionalActions, ParseError> {
+/// - Null/missing (no conditional actions)
+fn parse_conditional_actions(yaml: &Yaml) -> Result<ConditionalActions, ParseError> {
     if let Some(arr) = yaml.as_sequence() {
         // Leaf node: array of action strings
         let actions: Vec<String> = arr
             .iter()
             .filter_map(|v: &Yaml| v.as_str().map(|s| s.to_string()))
             .collect();
-        return Ok(OptionalActions::Actions(actions));
+        return Ok(ConditionalActions::Actions(actions));
     }
 
     if let Some(hash) = yaml.as_mapping() {
-        // Nested structure: map of key -> OptionalActions
+        // Nested structure: map of key -> ConditionalActions
         let mut map = HashMap::new();
 
         for (key, value) in hash {
@@ -126,19 +137,19 @@ fn parse_optional_actions(yaml: &Yaml) -> Result<OptionalActions, ParseError> {
                 None => continue, // Skip non-string keys
             };
 
-            let nested = parse_optional_actions(value)?;
+            let nested = parse_conditional_actions(value)?;
             map.insert(key_str, nested);
         }
 
-        return Ok(OptionalActions::Nested(map));
+        return Ok(ConditionalActions::Nested(map));
     }
 
     if yaml.is_null() || yaml.is_badvalue() {
-        return Ok(OptionalActions::None);
+        return Ok(ConditionalActions::None);
     }
 
     Err(ParseError::InvalidStructure(
-        "Expected array or mapping in optional".to_string(),
+        "Expected array or mapping in conditional".to_string(),
     ))
 }
 
@@ -150,37 +161,38 @@ mod tests {
     #[test]
     fn parse_simple_mapping() {
         let yaml = r#"
-actions:
+allow:
   - "s3:CreateBucket"
   - "s3:DeleteBucket"
 "#;
         let mapping = parse_mapping(yaml).unwrap();
-        assert_eq!(mapping.actions.len(), 2);
-        assert!(mapping.actions.contains(&"s3:CreateBucket".to_string()));
-        assert!(mapping.actions.contains(&"s3:DeleteBucket".to_string()));
-        assert!(mapping.optional.is_none());
+        assert_eq!(mapping.allow.len(), 2);
+        assert!(mapping.allow.contains(&"s3:CreateBucket".to_string()));
+        assert!(mapping.allow.contains(&"s3:DeleteBucket".to_string()));
+        assert!(mapping.conditional.is_none());
+        assert!(mapping.deny.is_empty());
     }
 
     #[test]
-    fn parse_mapping_with_optional() {
+    fn parse_mapping_with_conditional() {
         let yaml = r#"
-actions:
+allow:
   - "route53:CreateHostedZone"
-optional:
+conditional:
   tags:
     - "route53:ChangeTagsForResource"
 "#;
         let mapping = parse_mapping(yaml).unwrap();
-        assert_eq!(mapping.actions.len(), 1);
-        assert!(!mapping.optional.is_none());
+        assert_eq!(mapping.allow.len(), 1);
+        assert!(!mapping.conditional.is_none());
     }
 
     #[test]
-    fn parse_nested_optional() {
+    fn parse_nested_conditional() {
         let yaml = r#"
-actions:
+allow:
   - "route53:CreateHostedZone"
-optional:
+conditional:
   vpc:
     vpc_id:
       - "route53:AssociateVPCWithHostedZone"
@@ -191,16 +203,16 @@ optional:
         present.insert(vec!["vpc".to_string()]);
         present.insert(vec!["vpc".to_string(), "vpc_id".to_string()]);
 
-        let resolved = mapping.optional.resolve(&present);
+        let resolved = mapping.conditional.resolve(&present);
         assert!(resolved.contains(&"route53:AssociateVPCWithHostedZone".to_string()));
     }
 
     #[test]
-    fn parse_optional_not_resolved_when_absent() {
+    fn parse_conditional_not_resolved_when_absent() {
         let yaml = r#"
-actions:
+allow:
   - "route53:CreateHostedZone"
-optional:
+conditional:
   tags:
     - "route53:ChangeTagsForResource"
 "#;
@@ -208,14 +220,14 @@ optional:
 
         let present = HashSet::new(); // No attributes present
 
-        let resolved = mapping.optional.resolve(&present);
+        let resolved = mapping.conditional.resolve(&present);
         assert!(resolved.is_empty());
     }
 
     #[test]
-    fn parse_deeply_nested_optional() {
+    fn parse_deeply_nested_conditional() {
         let yaml = r#"
-optional:
+conditional:
   level1:
     level2:
       level3:
@@ -232,7 +244,7 @@ optional:
             "level3".to_string(),
         ]);
 
-        let resolved = mapping.optional.resolve(&present);
+        let resolved = mapping.conditional.resolve(&present);
         assert!(resolved.contains(&"action:DeepAction".to_string()));
     }
 
@@ -244,34 +256,36 @@ optional:
     }
 
     #[test]
-    fn parse_mapping_with_no_actions() {
+    fn parse_mapping_with_no_allow() {
         let yaml = r#"
-optional:
+conditional:
   tags:
     - "s3:PutBucketTagging"
 "#;
         let mapping = parse_mapping(yaml).unwrap();
-        assert!(mapping.actions.is_empty());
-        assert!(!mapping.optional.is_none());
+        assert!(mapping.allow.is_empty());
+        assert!(mapping.deny.is_empty());
+        assert!(!mapping.conditional.is_none());
     }
 
     #[test]
-    fn parse_mapping_with_only_actions() {
+    fn parse_mapping_with_only_allow() {
         let yaml = r#"
-actions:
+allow:
   - "ec2:DescribeAvailabilityZones"
 "#;
         let mapping = parse_mapping(yaml).unwrap();
-        assert_eq!(mapping.actions.len(), 1);
-        assert!(mapping.optional.is_none());
+        assert_eq!(mapping.allow.len(), 1);
+        assert!(mapping.conditional.is_none());
+        assert!(mapping.deny.is_empty());
     }
 
     #[test]
-    fn parse_mixed_optional_structure() {
+    fn parse_mixed_conditional_structure() {
         let yaml = r#"
-actions:
+allow:
   - "s3:CreateBucket"
-optional:
+conditional:
   tags:
     - "s3:PutBucketTagging"
   logging:
@@ -280,17 +294,17 @@ optional:
 "#;
         let mapping = parse_mapping(yaml).unwrap();
 
-        // Test simple optional
+        // Test simple conditional
         let mut present_tags = HashSet::new();
         present_tags.insert(vec!["tags".to_string()]);
-        let resolved_tags = mapping.optional.resolve(&present_tags);
+        let resolved_tags = mapping.conditional.resolve(&present_tags);
         assert!(resolved_tags.contains(&"s3:PutBucketTagging".to_string()));
 
-        // Test nested optional
+        // Test nested conditional
         let mut present_logging = HashSet::new();
         present_logging.insert(vec!["logging".to_string()]);
         present_logging.insert(vec!["logging".to_string(), "target_bucket".to_string()]);
-        let resolved_logging = mapping.optional.resolve(&present_logging);
+        let resolved_logging = mapping.conditional.resolve(&present_logging);
         assert!(resolved_logging.contains(&"s3:PutBucketLogging".to_string()));
     }
 
@@ -304,7 +318,7 @@ optional:
     #[test]
     fn parse_multiple_actions_at_same_level() {
         let yaml = r#"
-optional:
+conditional:
   vpc:
     vpc_id:
       - "route53:AssociateVPCWithHostedZone"
@@ -316,7 +330,7 @@ optional:
         present.insert(vec!["vpc".to_string()]);
         present.insert(vec!["vpc".to_string(), "vpc_id".to_string()]);
 
-        let resolved = mapping.optional.resolve(&present);
+        let resolved = mapping.conditional.resolve(&present);
         assert_eq!(resolved.len(), 2);
         assert!(resolved.contains(&"route53:AssociateVPCWithHostedZone".to_string()));
         assert!(resolved.contains(&"route53:DisassociateVPCFromHostedZone".to_string()));
@@ -325,7 +339,7 @@ optional:
     #[test]
     fn parse_siblings_at_nested_level() {
         let yaml = r#"
-optional:
+conditional:
   vpc:
     vpc_id:
       - "route53:AssociateVPCWithHostedZone"
@@ -339,7 +353,7 @@ optional:
         present_id.insert(vec!["vpc".to_string()]);
         present_id.insert(vec!["vpc".to_string(), "vpc_id".to_string()]);
 
-        let resolved_id = mapping.optional.resolve(&present_id);
+        let resolved_id = mapping.conditional.resolve(&present_id);
         assert_eq!(resolved_id.len(), 1);
 
         // Both vpc_id and vpc_region present
@@ -348,7 +362,71 @@ optional:
         present_both.insert(vec!["vpc".to_string(), "vpc_id".to_string()]);
         present_both.insert(vec!["vpc".to_string(), "vpc_region".to_string()]);
 
-        let resolved_both = mapping.optional.resolve(&present_both);
+        let resolved_both = mapping.conditional.resolve(&present_both);
         assert_eq!(resolved_both.len(), 2);
+    }
+
+    // --- New deny tests ---
+
+    #[test]
+    fn parse_mapping_with_deny() {
+        let yaml = r#"
+deny:
+  - "s3:GetObject"
+  - "s3:PutObject"
+"#;
+        let mapping = parse_mapping(yaml).unwrap();
+        assert_eq!(mapping.deny.len(), 2);
+        assert!(mapping.deny.contains(&"s3:GetObject".to_string()));
+        assert!(mapping.deny.contains(&"s3:PutObject".to_string()));
+        assert!(mapping.allow.is_empty());
+    }
+
+    #[test]
+    fn parse_mapping_with_allow_and_deny() {
+        let yaml = r#"
+allow:
+  - "s3:Get*"
+  - "s3:List*"
+deny:
+  - "s3:GetObject"
+"#;
+        let mapping = parse_mapping(yaml).unwrap();
+        assert_eq!(mapping.allow.len(), 2);
+        assert_eq!(mapping.deny.len(), 1);
+        assert!(mapping.allow.contains(&"s3:Get*".to_string()));
+        assert!(mapping.deny.contains(&"s3:GetObject".to_string()));
+    }
+
+    #[test]
+    fn parse_mapping_with_all_three_sections() {
+        let yaml = r#"
+allow:
+  - "s3:Get*"
+deny:
+  - "s3:GetObject"
+conditional:
+  tags:
+    - "s3:PutBucketTagging"
+"#;
+        let mapping = parse_mapping(yaml).unwrap();
+        assert_eq!(mapping.allow.len(), 1);
+        assert_eq!(mapping.deny.len(), 1);
+        assert!(!mapping.conditional.is_none());
+
+        let mut present = HashSet::new();
+        present.insert(vec!["tags".to_string()]);
+        let resolved = mapping.conditional.resolve(&present);
+        assert!(resolved.contains(&"s3:PutBucketTagging".to_string()));
+    }
+
+    #[test]
+    fn parse_mapping_deny_empty_when_absent() {
+        let yaml = r#"
+allow:
+  - "s3:CreateBucket"
+"#;
+        let mapping = parse_mapping(yaml).unwrap();
+        assert!(mapping.deny.is_empty());
     }
 }

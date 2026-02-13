@@ -7,40 +7,44 @@ use std::collections::{HashMap, HashSet};
 
 /// Represents a YAML mapping file for a Terraform block type.
 ///
-/// Each mapping file contains required actions (always needed) and optional
-/// actions that depend on the presence of specific attributes in the Terraform block.
+/// Each mapping file contains allow actions (always needed), deny actions
+/// (explicitly denied), and conditional actions that depend on the presence
+/// of specific attributes in the Terraform block.
 #[derive(Debug, Clone)]
 pub struct ActionMapping {
-    /// Required actions (always needed for this resource type)
-    pub actions: Vec<String>,
+    /// Allow actions (always needed for this resource type)
+    pub allow: Vec<String>,
 
-    /// Optional actions based on attribute presence
-    /// Can be nested to any depth
-    pub optional: OptionalActions,
+    /// Deny actions (explicitly denied for this resource type)
+    pub deny: Vec<String>,
+
+    /// Conditional actions based on attribute presence.
+    /// Can be nested to any depth. Always produces allow-effect permissions.
+    pub conditional: ConditionalActions,
 }
 
-/// Represents optional actions that depend on attribute presence.
+/// Represents conditional actions that depend on attribute presence.
 ///
 /// This is a recursive structure supporting arbitrary nesting depth.
 /// For example, a mapping might specify that the `route53:AssociateVPCWithHostedZone`
 /// action is only needed when `vpc.vpc_id` is present in the Terraform block.
 #[derive(Debug, Clone, Default)]
-pub enum OptionalActions {
+pub enum ConditionalActions {
     /// A list of actions (leaf node)
     Actions(Vec<String>),
 
     /// Nested attributes mapping
-    Nested(HashMap<String, OptionalActions>),
+    Nested(HashMap<String, ConditionalActions>),
 
-    /// No optional actions
+    /// No conditional actions
     #[default]
     None,
 }
 
-impl OptionalActions {
+impl ConditionalActions {
     /// Checks if this is an empty/none value
     pub fn is_none(&self) -> bool {
-        matches!(self, OptionalActions::None)
+        matches!(self, ConditionalActions::None)
     }
 
     /// Resolves actions based on present attribute paths.
@@ -58,7 +62,7 @@ impl OptionalActions {
     ///
     /// Given a mapping with:
     /// ```yaml
-    /// optional:
+    /// conditional:
     ///   vpc:
     ///     vpc_id:
     ///       - "route53:AssociateVPCWithHostedZone"
@@ -81,9 +85,9 @@ impl OptionalActions {
         present_paths: &HashSet<Vec<String>>,
     ) -> Vec<String> {
         match self {
-            OptionalActions::None => Vec::new(),
+            ConditionalActions::None => Vec::new(),
 
-            OptionalActions::Actions(actions) => {
+            ConditionalActions::Actions(actions) => {
                 // This is a leaf node - check if the current path is present
                 let path_vec = current_path.to_vec();
                 if present_paths.contains(&path_vec) {
@@ -93,7 +97,7 @@ impl OptionalActions {
                 }
             }
 
-            OptionalActions::Nested(map) => {
+            ConditionalActions::Nested(map) => {
                 let mut result = Vec::new();
 
                 for (key, value) in map {
@@ -103,15 +107,15 @@ impl OptionalActions {
                     // Check if this path exists in present_paths
                     if present_paths.contains(&new_path) {
                         match value {
-                            OptionalActions::Actions(actions) => {
+                            ConditionalActions::Actions(actions) => {
                                 // Direct actions at this level
                                 result.extend(actions.clone());
                             }
-                            OptionalActions::Nested(_) => {
+                            ConditionalActions::Nested(_) => {
                                 // Recurse deeper
                                 result.extend(value.resolve_recursive(&new_path, present_paths));
                             }
-                            OptionalActions::None => {}
+                            ConditionalActions::None => {}
                         }
                     }
                 }
@@ -127,46 +131,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn optional_actions_none_is_none() {
-        assert!(OptionalActions::None.is_none());
+    fn conditional_actions_none_is_none() {
+        assert!(ConditionalActions::None.is_none());
     }
 
     #[test]
-    fn optional_actions_with_actions_is_not_none() {
-        let actions = OptionalActions::Actions(vec!["s3:CreateBucket".to_string()]);
+    fn conditional_actions_with_actions_is_not_none() {
+        let actions = ConditionalActions::Actions(vec!["s3:CreateBucket".to_string()]);
         assert!(!actions.is_none());
     }
 
     #[test]
-    fn optional_actions_nested_is_not_none() {
-        let nested = OptionalActions::Nested(HashMap::new());
+    fn conditional_actions_nested_is_not_none() {
+        let nested = ConditionalActions::Nested(HashMap::new());
         assert!(!nested.is_none());
     }
 
     #[test]
     fn resolve_returns_empty_for_none() {
-        let optional = OptionalActions::None;
+        let conditional = ConditionalActions::None;
         let present = HashSet::new();
-        assert!(optional.resolve(&present).is_empty());
+        assert!(conditional.resolve(&present).is_empty());
     }
 
     #[test]
     fn resolve_returns_actions_when_path_present() {
-        let optional = OptionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]);
+        let conditional =
+            ConditionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]);
 
         let mut present = HashSet::new();
         present.insert(Vec::new()); // Empty path for root-level Actions
 
-        let resolved = optional.resolve(&present);
+        let resolved = conditional.resolve(&present);
         assert_eq!(resolved, vec!["s3:PutBucketTagging".to_string()]);
     }
 
     #[test]
     fn resolve_returns_empty_when_path_absent() {
-        let optional = OptionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]);
+        let conditional =
+            ConditionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]);
         let present = HashSet::new(); // No paths present
 
-        let resolved = optional.resolve(&present);
+        let resolved = conditional.resolve(&present);
         assert!(resolved.is_empty());
     }
 
@@ -175,15 +181,15 @@ mod tests {
         let mut nested_map = HashMap::new();
         nested_map.insert(
             "tags".to_string(),
-            OptionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]),
+            ConditionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]),
         );
 
-        let optional = OptionalActions::Nested(nested_map);
+        let conditional = ConditionalActions::Nested(nested_map);
 
         let mut present = HashSet::new();
         present.insert(vec!["tags".to_string()]);
 
-        let resolved = optional.resolve(&present);
+        let resolved = conditional.resolve(&present);
         assert_eq!(resolved, vec!["s3:PutBucketTagging".to_string()]);
     }
 
@@ -193,20 +199,25 @@ mod tests {
         let mut vpc_id_map = HashMap::new();
         vpc_id_map.insert(
             "vpc_id".to_string(),
-            OptionalActions::Actions(vec!["route53:AssociateVPCWithHostedZone".to_string()]),
+            ConditionalActions::Actions(vec![
+                "route53:AssociateVPCWithHostedZone".to_string(),
+            ]),
         );
 
         let mut root_map = HashMap::new();
-        root_map.insert("vpc".to_string(), OptionalActions::Nested(vpc_id_map));
+        root_map.insert(
+            "vpc".to_string(),
+            ConditionalActions::Nested(vpc_id_map),
+        );
 
-        let optional = OptionalActions::Nested(root_map);
+        let conditional = ConditionalActions::Nested(root_map);
 
         // Both vpc and vpc.vpc_id must be present
         let mut present = HashSet::new();
         present.insert(vec!["vpc".to_string()]);
         present.insert(vec!["vpc".to_string(), "vpc_id".to_string()]);
 
-        let resolved = optional.resolve(&present);
+        let resolved = conditional.resolve(&present);
         assert_eq!(
             resolved,
             vec!["route53:AssociateVPCWithHostedZone".to_string()]
@@ -219,42 +230,47 @@ mod tests {
         let mut vpc_id_map = HashMap::new();
         vpc_id_map.insert(
             "vpc_id".to_string(),
-            OptionalActions::Actions(vec!["route53:AssociateVPCWithHostedZone".to_string()]),
+            ConditionalActions::Actions(vec![
+                "route53:AssociateVPCWithHostedZone".to_string(),
+            ]),
         );
 
         let mut root_map = HashMap::new();
-        root_map.insert("vpc".to_string(), OptionalActions::Nested(vpc_id_map));
+        root_map.insert(
+            "vpc".to_string(),
+            ConditionalActions::Nested(vpc_id_map),
+        );
 
-        let optional = OptionalActions::Nested(root_map);
+        let conditional = ConditionalActions::Nested(root_map);
 
         // Only vpc.vpc_id present, but not vpc itself
         let mut present = HashSet::new();
         present.insert(vec!["vpc".to_string(), "vpc_id".to_string()]);
 
-        let resolved = optional.resolve(&present);
+        let resolved = conditional.resolve(&present);
         // Should be empty because "vpc" path is not in present_paths
         assert!(resolved.is_empty());
     }
 
     #[test]
-    fn resolve_multiple_optional_paths() {
+    fn resolve_multiple_conditional_paths() {
         let mut root_map = HashMap::new();
         root_map.insert(
             "tags".to_string(),
-            OptionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]),
+            ConditionalActions::Actions(vec!["s3:PutBucketTagging".to_string()]),
         );
         root_map.insert(
             "versioning".to_string(),
-            OptionalActions::Actions(vec!["s3:PutBucketVersioning".to_string()]),
+            ConditionalActions::Actions(vec!["s3:PutBucketVersioning".to_string()]),
         );
 
-        let optional = OptionalActions::Nested(root_map);
+        let conditional = ConditionalActions::Nested(root_map);
 
         let mut present = HashSet::new();
         present.insert(vec!["tags".to_string()]);
         present.insert(vec!["versioning".to_string()]);
 
-        let mut resolved = optional.resolve(&present);
+        let mut resolved = conditional.resolve(&present);
         resolved.sort();
 
         assert_eq!(
@@ -272,16 +288,22 @@ mod tests {
         let mut level3_map = HashMap::new();
         level3_map.insert(
             "level3".to_string(),
-            OptionalActions::Actions(vec!["action:DeepAction".to_string()]),
+            ConditionalActions::Actions(vec!["action:DeepAction".to_string()]),
         );
 
         let mut level2_map = HashMap::new();
-        level2_map.insert("level2".to_string(), OptionalActions::Nested(level3_map));
+        level2_map.insert(
+            "level2".to_string(),
+            ConditionalActions::Nested(level3_map),
+        );
 
         let mut level1_map = HashMap::new();
-        level1_map.insert("level1".to_string(), OptionalActions::Nested(level2_map));
+        level1_map.insert(
+            "level1".to_string(),
+            ConditionalActions::Nested(level2_map),
+        );
 
-        let optional = OptionalActions::Nested(level1_map);
+        let conditional = ConditionalActions::Nested(level1_map);
 
         let mut present = HashSet::new();
         present.insert(vec!["level1".to_string()]);
@@ -292,7 +314,21 @@ mod tests {
             "level3".to_string(),
         ]);
 
-        let resolved = optional.resolve(&present);
+        let resolved = conditional.resolve(&present);
         assert_eq!(resolved, vec!["action:DeepAction".to_string()]);
+    }
+
+    #[test]
+    fn action_mapping_with_deny_field() {
+        let mapping = ActionMapping {
+            allow: vec!["s3:Get*".to_string(), "s3:List*".to_string()],
+            deny: vec!["s3:GetObject".to_string()],
+            conditional: ConditionalActions::None,
+        };
+
+        assert_eq!(mapping.allow.len(), 2);
+        assert_eq!(mapping.deny.len(), 1);
+        assert!(mapping.deny.contains(&"s3:GetObject".to_string()));
+        assert!(!mapping.allow.contains(&"s3:GetObject".to_string()));
     }
 }

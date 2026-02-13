@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::cli::OutputFormat;
 use crate::mapping::PermissionResult;
-use formatter::create_formatter;
+use formatter::{create_formatter, PermissionSets};
 
 /// Errors that can occur during output generation.
 #[derive(Debug, Error)]
@@ -128,7 +128,7 @@ impl OutputWriter {
         let mut handle = stdout.lock();
 
         // Sort output names for consistent ordering
-        let mut output_names: Vec<_> = result.permissions.keys().collect();
+        let mut output_names: Vec<_> = result.groups.keys().collect();
         output_names.sort();
 
         for (i, output_name) in output_names.iter().enumerate() {
@@ -143,8 +143,11 @@ impl OutputWriter {
                 writeln!(handle, "{}", header.cyan().bold())?;
             }
 
-            let permissions = result.permissions.get(*output_name).unwrap();
-            let formatted = formatter.format(permissions);
+            let group_perms = result.groups.get(*output_name).unwrap();
+            let formatted = formatter.format(&PermissionSets {
+                allow: &group_perms.allow,
+                deny: &group_perms.deny,
+            });
             writeln!(handle, "{}", formatted)?;
         }
 
@@ -161,7 +164,7 @@ impl OutputWriter {
         // Create directory if it doesn't exist
         fs::create_dir_all(dir)?;
 
-        for (output_name, permissions) in &result.permissions {
+        for (output_name, group_perms) in &result.groups {
             // Sanitize the output name to prevent path traversal
             let safe_name = sanitize_filename(output_name).ok_or_else(|| {
                 OutputError::InvalidFilename(format!(
@@ -187,7 +190,10 @@ impl OutputWriter {
                 )));
             }
 
-            let formatted = formatter.format(permissions);
+            let formatted = formatter.format(&PermissionSets {
+                allow: &group_perms.allow,
+                deny: &group_perms.deny,
+            });
             fs::write(&file_path, formatted)?;
 
             log::info!("Written: {}", file_path.display());
@@ -241,26 +247,38 @@ impl OutputWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mapping::MissingMapping;
+    use crate::mapping::{GroupPermissions, MissingMapping};
     use crate::terraform::BlockType;
     use std::collections::{HashMap, HashSet};
     use tempfile::TempDir;
 
     fn create_test_result() -> PermissionResult {
-        let mut permissions = HashMap::new();
+        let mut groups = HashMap::new();
 
-        let mut perms1 = HashSet::new();
-        perms1.insert("ec2:DescribeInstances".to_string());
-        perms1.insert("ec2:RunInstances".to_string());
-        permissions.insert("ComputeDeployer".to_string(), perms1);
+        let mut allow1 = HashSet::new();
+        allow1.insert("ec2:DescribeInstances".to_string());
+        allow1.insert("ec2:RunInstances".to_string());
+        groups.insert(
+            "ComputeDeployer".to_string(),
+            GroupPermissions {
+                allow: allow1,
+                deny: HashSet::new(),
+            },
+        );
 
-        let mut perms2 = HashSet::new();
-        perms2.insert("s3:CreateBucket".to_string());
-        perms2.insert("s3:DeleteBucket".to_string());
-        permissions.insert("StorageDeployer".to_string(), perms2);
+        let mut allow2 = HashSet::new();
+        allow2.insert("s3:CreateBucket".to_string());
+        allow2.insert("s3:DeleteBucket".to_string());
+        groups.insert(
+            "StorageDeployer".to_string(),
+            GroupPermissions {
+                allow: allow2,
+                deny: HashSet::new(),
+            },
+        );
 
         PermissionResult {
-            permissions,
+            groups,
             missing_mappings: Vec::new(),
         }
     }
@@ -343,7 +361,7 @@ mod tests {
     #[test]
     fn write_missing_mappings_outputs_warning() {
         let result = PermissionResult {
-            permissions: HashMap::new(),
+            groups: HashMap::new(),
             missing_mappings: vec![MissingMapping {
                 block_type: BlockType::Resource,
                 type_name: "aws_unknown_resource".to_string(),
@@ -361,7 +379,7 @@ mod tests {
     #[test]
     fn write_missing_mappings_empty_does_nothing() {
         let result = PermissionResult {
-            permissions: HashMap::new(),
+            groups: HashMap::new(),
             missing_mappings: Vec::new(),
         };
 
@@ -380,7 +398,7 @@ mod tests {
             true,
         );
         let result = PermissionResult {
-            permissions: HashMap::new(),
+            groups: HashMap::new(),
             missing_mappings: Vec::new(),
         };
 
@@ -456,13 +474,19 @@ mod tests {
             true,
         );
 
-        let mut permissions = HashMap::new();
-        let mut perms = HashSet::new();
-        perms.insert("s3:GetObject".to_string());
-        permissions.insert("../../../etc/malicious".to_string(), perms);
+        let mut groups = HashMap::new();
+        let mut allow = HashSet::new();
+        allow.insert("s3:GetObject".to_string());
+        groups.insert(
+            "../../../etc/malicious".to_string(),
+            GroupPermissions {
+                allow,
+                deny: HashSet::new(),
+            },
+        );
 
         let result = PermissionResult {
-            permissions,
+            groups,
             missing_mappings: Vec::new(),
         };
 
@@ -473,5 +497,85 @@ mod tests {
         let parent = temp_dir.path().parent().unwrap();
         let malicious_file = parent.join("malicious.hcl");
         assert!(!malicious_file.exists());
+    }
+
+    // --- New deny tests ---
+
+    #[test]
+    fn write_to_directory_with_deny_permissions() {
+        let temp_dir = TempDir::new().unwrap();
+        let writer = OutputWriter::new(
+            OutputFormat::Json,
+            Some(temp_dir.path().to_path_buf()),
+            true,
+        );
+
+        let mut groups = HashMap::new();
+        let mut allow = HashSet::new();
+        allow.insert("s3:Get*".to_string());
+        let mut deny = HashSet::new();
+        deny.insert("s3:GetObject".to_string());
+        groups.insert(
+            "TestDeployer".to_string(),
+            GroupPermissions { allow, deny },
+        );
+
+        let result = PermissionResult {
+            groups,
+            missing_mappings: Vec::new(),
+        };
+
+        writer.write(&result).unwrap();
+
+        let file = temp_dir.path().join("TestDeployer.json");
+        assert!(file.exists());
+
+        let content = fs::read_to_string(&file).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let statements = parsed["Statement"].as_array().unwrap();
+
+        // Should have both Deny and Allow statements
+        assert_eq!(statements.len(), 2);
+        assert_eq!(statements[0]["Effect"], "Deny");
+        assert_eq!(statements[1]["Effect"], "Allow");
+    }
+
+    #[test]
+    fn write_deny_only_group() {
+        let temp_dir = TempDir::new().unwrap();
+        let writer = OutputWriter::new(
+            OutputFormat::Json,
+            Some(temp_dir.path().to_path_buf()),
+            true,
+        );
+
+        let mut groups = HashMap::new();
+        let mut deny = HashSet::new();
+        deny.insert("s3:GetObject".to_string());
+        groups.insert(
+            "TestDeployer".to_string(),
+            GroupPermissions {
+                allow: HashSet::new(),
+                deny,
+            },
+        );
+
+        let result = PermissionResult {
+            groups,
+            missing_mappings: Vec::new(),
+        };
+
+        writer.write(&result).unwrap();
+
+        let file = temp_dir.path().join("TestDeployer.json");
+        assert!(file.exists());
+
+        let content = fs::read_to_string(&file).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let statements = parsed["Statement"].as_array().unwrap();
+
+        // Only Deny statement
+        assert_eq!(statements.len(), 1);
+        assert_eq!(statements[0]["Effect"], "Deny");
     }
 }

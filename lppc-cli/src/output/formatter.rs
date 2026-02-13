@@ -8,17 +8,30 @@ use std::collections::HashSet;
 
 use crate::cli::OutputFormat;
 
+/// A pair of allow and deny permission sets passed to formatters.
+///
+/// Using a struct instead of two separate `HashSet` parameters prevents
+/// accidental parameter swap at call sites and is extensible.
+pub struct PermissionSets<'a> {
+    /// IAM actions to allow
+    pub allow: &'a HashSet<String>,
+
+    /// IAM actions to deny
+    pub deny: &'a HashSet<String>,
+}
+
 /// Trait for formatting permission sets into output strings.
 ///
-/// Implementors of this trait convert a set of IAM permission strings
+/// Implementors of this trait convert allow and deny permission sets
 /// into a formatted string suitable for the target output format.
 pub trait OutputFormatter {
-    /// Formats a set of permissions into a string.
+    /// Formats permission sets into a string.
     ///
-    /// The permissions are provided as a `HashSet` to ensure uniqueness.
-    /// Implementations should sort the permissions appropriately for
-    /// consistent output.
-    fn format(&self, permissions: &HashSet<String>) -> String;
+    /// The permissions are provided as `PermissionSets` containing both
+    /// allow and deny sets. Implementations should sort the permissions
+    /// appropriately for consistent output, and generate Deny statements
+    /// before Allow statements.
+    fn format(&self, permissions: &PermissionSets) -> String;
 
     /// Returns the file extension for this format.
     ///

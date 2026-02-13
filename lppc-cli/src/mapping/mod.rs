@@ -15,7 +15,7 @@ pub mod schema;
 pub mod yaml_parser;
 
 pub use loader::MappingLoader;
-pub use matcher::{MissingMapping, PermissionMatcher, PermissionResult};
+pub use matcher::{GroupPermissions, MissingMapping, PermissionMatcher, PermissionResult};
 
 use std::path::PathBuf;
 use thiserror::Error;

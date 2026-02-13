@@ -11,7 +11,7 @@ Your role is to review every code change for architectural soundness. You are a 
 
 ## Architecture Reference Document
 
-Before scanning the full codebase, check for `lppc-cli/specs/Architecture.md`. If it exists, read it first — it contains a comprehensive overview of the module structure, key data types, dependency flow, design patterns, conventions, and file-by-file summaries. This should give you sufficient context to review proposed changes without a full codebase scan. You will still need to read the specific source files involved in a change, but the Architecture.md eliminates the need to scan every file for orientation.
+Before scanning the full codebase, check for @lppc-cli/specs/architecture.md or @mapping-creator/specs/architecture.md respectively. If it exists, read it first — it contains a comprehensive overview of the module structure, key data types, dependency flow, design patterns, conventions, and file-by-file summaries. This should give you sufficient context to review proposed changes without a full codebase scan. You will still need to read the specific source files involved in a change, but the Architecture.md eliminates the need to scan every file for orientation.
 
 **Important**: If your review results in structural changes (new modules, changed dependencies, renamed types, new patterns), update the Architecture.md to reflect those changes so it stays current.
 

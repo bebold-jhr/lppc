@@ -10,13 +10,23 @@ use thiserror::Error;
 use super::loader::{LoadError, MappingLoader};
 use crate::terraform::{BlockType, TerraformConfig};
 
+/// Permissions for a single provider group, separating allow and deny.
+#[derive(Debug, Clone)]
+pub struct GroupPermissions {
+    /// IAM actions to allow
+    pub allow: HashSet<String>,
+
+    /// IAM actions to deny
+    pub deny: HashSet<String>,
+}
+
 /// Result of permission matching for a Terraform configuration.
 #[derive(Debug)]
 pub struct PermissionResult {
-    /// Map of output name to set of permissions.
+    /// Map of output name to its resolved permissions.
     /// Key: Output name (e.g., "NetworkDeployer")
-    /// Value: Set of IAM actions required for that role
-    pub permissions: HashMap<String, HashSet<String>>,
+    /// Value: Allow and deny permission sets for that role
+    pub groups: HashMap<String, GroupPermissions>,
 
     /// Blocks that had no mapping file available.
     /// These require manual permission review.
@@ -59,9 +69,10 @@ impl<'a> PermissionMatcher<'a> {
     /// This method:
     /// 1. Iterates through all provider groups
     /// 2. For each block, loads the corresponding mapping file
-    /// 3. Adds required actions to the permission set
-    /// 4. Resolves optional actions based on present attributes
-    /// 5. Tracks any blocks without mapping files
+    /// 3. Adds allow actions to the allow permission set
+    /// 4. Adds deny actions to the deny permission set
+    /// 5. Resolves conditional actions into the allow permission set
+    /// 6. Tracks any blocks without mapping files
     ///
     /// # Arguments
     ///
@@ -72,12 +83,13 @@ impl<'a> PermissionMatcher<'a> {
     /// A `PermissionResult` containing the resolved permissions per provider group
     /// and a list of blocks with missing mappings.
     pub fn resolve(&self, config: &TerraformConfig) -> Result<PermissionResult, MatchError> {
-        let mut permissions: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut groups: HashMap<String, GroupPermissions> = HashMap::new();
         let mut missing_mappings: Vec<MissingMapping> = Vec::new();
         let mut seen_types: HashSet<(BlockType, String)> = HashSet::new();
 
         for (output_name, group) in &config.provider_groups {
-            let mut group_permissions: HashSet<String> = HashSet::new();
+            let mut group_allow_permissions: HashSet<String> = HashSet::new();
+            let mut group_deny_permissions: HashSet<String> = HashSet::new();
 
             for block in &group.blocks {
                 let type_key = (block.block_type, block.type_name.clone());
@@ -91,23 +103,31 @@ impl<'a> PermissionMatcher<'a> {
                     .load(provider, block.block_type, &block.type_name)?
                 {
                     Some(mapping) => {
-                        // Add required actions
-                        let required_count = mapping.actions.len();
-                        for action in &mapping.actions {
-                            group_permissions.insert(action.clone());
+                        // Add allow actions
+                        let allow_count = mapping.allow.len();
+                        for action in &mapping.allow {
+                            group_allow_permissions.insert(action.clone());
                         }
 
-                        // Resolve optional actions based on present attributes
-                        let optional_actions = mapping.optional.resolve(&block.present_attributes);
-                        let optional_count = optional_actions.len();
-                        for action in optional_actions {
-                            group_permissions.insert(action);
+                        // Add deny actions
+                        let deny_count = mapping.deny.len();
+                        for action in &mapping.deny {
+                            group_deny_permissions.insert(action.clone());
+                        }
+
+                        // Resolve conditional actions into allow permissions
+                        let conditional_actions =
+                            mapping.conditional.resolve(&block.present_attributes);
+                        let conditional_count = conditional_actions.len();
+                        for action in conditional_actions {
+                            group_allow_permissions.insert(action);
                         }
 
                         log::debug!(
-                            "Resolved {} required + {} optional actions for {}.{}",
-                            required_count,
-                            optional_count,
+                            "Resolved {} allow + {} conditional + {} deny actions for {}.{}",
+                            allow_count,
+                            conditional_count,
+                            deny_count,
                             block.block_type.as_str(),
                             block.type_name
                         );
@@ -131,8 +151,14 @@ impl<'a> PermissionMatcher<'a> {
                 }
             }
 
-            if !group_permissions.is_empty() {
-                permissions.insert(output_name.clone(), group_permissions);
+            if !group_allow_permissions.is_empty() || !group_deny_permissions.is_empty() {
+                groups.insert(
+                    output_name.clone(),
+                    GroupPermissions {
+                        allow: group_allow_permissions,
+                        deny: group_deny_permissions,
+                    },
+                );
             }
         }
 
@@ -146,7 +172,7 @@ impl<'a> PermissionMatcher<'a> {
         }
 
         Ok(PermissionResult {
-            permissions,
+            groups,
             missing_mappings,
         })
     }
@@ -190,7 +216,7 @@ mod tests {
         let config = create_test_config(HashMap::new());
         let result = matcher.resolve(&config).unwrap();
 
-        assert!(result.permissions.is_empty());
+        assert!(result.groups.is_empty());
         assert!(result.missing_mappings.is_empty());
     }
 
@@ -202,7 +228,7 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
-            "actions:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
+            "allow:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
         )
         .unwrap();
 
@@ -223,10 +249,11 @@ mod tests {
         let config = create_test_config(groups);
         let result = matcher.resolve(&config).unwrap();
 
-        assert_eq!(result.permissions.len(), 1);
-        let perms = result.permissions.get("TestDeployer").unwrap();
-        assert!(perms.contains("s3:CreateBucket"));
-        assert!(perms.contains("s3:DeleteBucket"));
+        assert_eq!(result.groups.len(), 1);
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.contains("s3:CreateBucket"));
+        assert!(group_perms.allow.contains("s3:DeleteBucket"));
+        assert!(group_perms.deny.is_empty());
         assert!(result.missing_mappings.is_empty());
     }
 
@@ -251,7 +278,7 @@ mod tests {
         let result = matcher.resolve(&config).unwrap();
 
         // No permissions resolved (mapping not found)
-        assert!(result.permissions.is_empty());
+        assert!(result.groups.is_empty());
         // Missing mapping tracked
         assert_eq!(result.missing_mappings.len(), 1);
         assert_eq!(result.missing_mappings[0].type_name, "aws_unknown_resource");
@@ -262,17 +289,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_optional_actions() {
+    fn resolve_conditional_actions() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create mapping with optional
+        // Create mapping with conditional
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
             r#"
-actions:
+allow:
   - s3:CreateBucket
-optional:
+conditional:
   tags:
     - s3:PutBucketTagging
 "#,
@@ -300,23 +327,23 @@ optional:
         let config = create_test_config(groups);
         let result = matcher.resolve(&config).unwrap();
 
-        let perms = result.permissions.get("TestDeployer").unwrap();
-        assert!(perms.contains("s3:CreateBucket"));
-        assert!(perms.contains("s3:PutBucketTagging"));
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.contains("s3:CreateBucket"));
+        assert!(group_perms.allow.contains("s3:PutBucketTagging"));
     }
 
     #[test]
-    fn resolve_optional_not_included_when_absent() {
+    fn resolve_conditional_not_included_when_absent() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create mapping with optional
+        // Create mapping with conditional
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
             r#"
-actions:
+allow:
   - s3:CreateBucket
-optional:
+conditional:
   tags:
     - s3:PutBucketTagging
 "#,
@@ -342,23 +369,23 @@ optional:
         let config = create_test_config(groups);
         let result = matcher.resolve(&config).unwrap();
 
-        let perms = result.permissions.get("TestDeployer").unwrap();
-        assert!(perms.contains("s3:CreateBucket"));
-        assert!(!perms.contains("s3:PutBucketTagging"));
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.contains("s3:CreateBucket"));
+        assert!(!group_perms.allow.contains("s3:PutBucketTagging"));
     }
 
     #[test]
-    fn resolve_nested_optional() {
+    fn resolve_nested_conditional() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create mapping with nested optional
+        // Create mapping with nested conditional
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_route53_zone.yaml"),
             r#"
-actions:
+allow:
   - route53:CreateHostedZone
-optional:
+conditional:
   vpc:
     vpc_id:
       - route53:AssociateVPCWithHostedZone
@@ -388,9 +415,9 @@ optional:
         let config = create_test_config(groups);
         let result = matcher.resolve(&config).unwrap();
 
-        let perms = result.permissions.get("TestDeployer").unwrap();
-        assert!(perms.contains("route53:CreateHostedZone"));
-        assert!(perms.contains("route53:AssociateVPCWithHostedZone"));
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.contains("route53:CreateHostedZone"));
+        assert!(group_perms.allow.contains("route53:AssociateVPCWithHostedZone"));
     }
 
     #[test]
@@ -401,7 +428,7 @@ optional:
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
-            "actions:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
+            "allow:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
         )
         .unwrap();
 
@@ -426,8 +453,8 @@ optional:
         let result = matcher.resolve(&config).unwrap();
 
         // Should have exactly 2 permissions (deduplicated)
-        let perms = result.permissions.get("TestDeployer").unwrap();
-        assert_eq!(perms.len(), 2);
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert_eq!(group_perms.allow.len(), 2);
     }
 
     #[test]
@@ -438,12 +465,12 @@ optional:
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
-            "actions:\n  - s3:CreateBucket",
+            "allow:\n  - s3:CreateBucket",
         )
         .unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_ec2_instance.yaml"),
-            "actions:\n  - ec2:RunInstances",
+            "allow:\n  - ec2:RunInstances",
         )
         .unwrap();
 
@@ -474,15 +501,15 @@ optional:
         let config = create_test_config(groups);
         let result = matcher.resolve(&config).unwrap();
 
-        assert_eq!(result.permissions.len(), 2);
+        assert_eq!(result.groups.len(), 2);
 
-        let storage_perms = result.permissions.get("StorageDeployer").unwrap();
-        assert!(storage_perms.contains("s3:CreateBucket"));
-        assert!(!storage_perms.contains("ec2:RunInstances"));
+        let storage_perms = result.groups.get("StorageDeployer").unwrap();
+        assert!(storage_perms.allow.contains("s3:CreateBucket"));
+        assert!(!storage_perms.allow.contains("ec2:RunInstances"));
 
-        let compute_perms = result.permissions.get("ComputeDeployer").unwrap();
-        assert!(compute_perms.contains("ec2:RunInstances"));
-        assert!(!compute_perms.contains("s3:CreateBucket"));
+        let compute_perms = result.groups.get("ComputeDeployer").unwrap();
+        assert!(compute_perms.allow.contains("ec2:RunInstances"));
+        assert!(!compute_perms.allow.contains("s3:CreateBucket"));
     }
 
     #[test]
@@ -493,7 +520,7 @@ optional:
         fs::create_dir_all(temp_dir.path().join("aws/data")).unwrap();
         fs::write(
             temp_dir.path().join("aws/data/aws_availability_zones.yaml"),
-            "actions:\n  - ec2:DescribeAvailabilityZones",
+            "allow:\n  - ec2:DescribeAvailabilityZones",
         )
         .unwrap();
 
@@ -515,8 +542,8 @@ optional:
         let config = create_test_config(groups);
         let result = matcher.resolve(&config).unwrap();
 
-        let perms = result.permissions.get("TestDeployer").unwrap();
-        assert!(perms.contains("ec2:DescribeAvailabilityZones"));
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.contains("ec2:DescribeAvailabilityZones"));
     }
 
     #[test]
@@ -571,5 +598,219 @@ optional:
 
         // Should track both as separate missing mappings
         assert_eq!(result.missing_mappings.len(), 2);
+    }
+
+    // --- New deny tests ---
+
+    #[test]
+    fn resolve_deny_permissions() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::write(
+            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            r#"
+allow:
+  - s3:Get*
+  - s3:List*
+deny:
+  - s3:GetObject
+"#,
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        let block = create_test_block(BlockType::Resource, "aws_s3_bucket", HashSet::new());
+        let mut groups = HashMap::new();
+        groups.insert(
+            "TestDeployer".to_string(),
+            ProviderGroup {
+                output_name: "TestDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Test".to_string()),
+                blocks: vec![block],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.contains("s3:Get*"));
+        assert!(group_perms.allow.contains("s3:List*"));
+        assert!(group_perms.deny.contains("s3:GetObject"));
+        assert!(!group_perms.allow.contains("s3:GetObject"));
+    }
+
+    #[test]
+    fn resolve_deny_only_mapping() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::write(
+            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            r#"
+deny:
+  - s3:GetObject
+"#,
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        let block = create_test_block(BlockType::Resource, "aws_s3_bucket", HashSet::new());
+        let mut groups = HashMap::new();
+        groups.insert(
+            "TestDeployer".to_string(),
+            ProviderGroup {
+                output_name: "TestDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Test".to_string()),
+                blocks: vec![block],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert!(group_perms.allow.is_empty());
+        assert!(group_perms.deny.contains("s3:GetObject"));
+    }
+
+    #[test]
+    fn resolve_deny_deduplication() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::write(
+            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            r#"
+deny:
+  - s3:GetObject
+"#,
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        // Two blocks of same type -> deny should be deduplicated
+        let block1 = create_test_block(BlockType::Resource, "aws_s3_bucket", HashSet::new());
+        let block2 = create_test_block(BlockType::Resource, "aws_s3_bucket", HashSet::new());
+
+        let mut groups = HashMap::new();
+        groups.insert(
+            "TestDeployer".to_string(),
+            ProviderGroup {
+                output_name: "TestDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Test".to_string()),
+                blocks: vec![block1, block2],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        assert_eq!(group_perms.deny.len(), 1);
+    }
+
+    #[test]
+    fn resolve_deny_across_multiple_groups() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::write(
+            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            "deny:\n  - s3:GetObject",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("aws/resource/aws_ec2_instance.yaml"),
+            "deny:\n  - ec2:TerminateInstances",
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        let block1 = create_test_block(BlockType::Resource, "aws_s3_bucket", HashSet::new());
+        let block2 = create_test_block(BlockType::Resource, "aws_ec2_instance", HashSet::new());
+
+        let mut groups = HashMap::new();
+        groups.insert(
+            "StorageDeployer".to_string(),
+            ProviderGroup {
+                output_name: "StorageDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Storage".to_string()),
+                blocks: vec![block1],
+            },
+        );
+        groups.insert(
+            "ComputeDeployer".to_string(),
+            ProviderGroup {
+                output_name: "ComputeDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Compute".to_string()),
+                blocks: vec![block2],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        let storage_perms = result.groups.get("StorageDeployer").unwrap();
+        assert!(storage_perms.deny.contains("s3:GetObject"));
+        assert!(!storage_perms.deny.contains("ec2:TerminateInstances"));
+
+        let compute_perms = result.groups.get("ComputeDeployer").unwrap();
+        assert!(compute_perms.deny.contains("ec2:TerminateInstances"));
+        assert!(!compute_perms.deny.contains("s3:GetObject"));
+    }
+
+    #[test]
+    fn resolve_conditional_does_not_add_to_deny() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::write(
+            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            r#"
+deny:
+  - s3:GetObject
+conditional:
+  tags:
+    - s3:PutBucketTagging
+"#,
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        let mut present = HashSet::new();
+        present.insert(vec!["tags".to_string()]);
+        let block = create_test_block(BlockType::Resource, "aws_s3_bucket", present);
+
+        let mut groups = HashMap::new();
+        groups.insert(
+            "TestDeployer".to_string(),
+            ProviderGroup {
+                output_name: "TestDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Test".to_string()),
+                blocks: vec![block],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        let group_perms = result.groups.get("TestDeployer").unwrap();
+        // Conditional resolves into allow, not deny
+        assert!(group_perms.allow.contains("s3:PutBucketTagging"));
+        assert!(!group_perms.deny.contains("s3:PutBucketTagging"));
+        // Original deny stays in deny
+        assert!(group_perms.deny.contains("s3:GetObject"));
     }
 }
