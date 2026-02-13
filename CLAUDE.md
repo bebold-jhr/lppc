@@ -19,3 +19,4 @@
 4. Let a `security-reviewer` subagent check the code for flaws or vulnerabilities
 5. Update the @README.md or additional documentation if needed
 6. Always run tests before you say that you have finished
+7. Let the `software-architect` subagent update the @lppc-cli/specs/architecture.md after implementing the changes.
