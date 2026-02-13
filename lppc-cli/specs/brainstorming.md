@@ -74,8 +74,8 @@ data "aws_availability_zones" "this" {
 ```
 
 ```yaml
-actions:
-    - "ec2:DescribeAvailabilityZones"
+allow:
+  - "ec2:DescribeAvailabilityZones"
 ```
 
 The mapping allows optional mapping based on the presence of (nested) properties as well.
@@ -89,25 +89,44 @@ resource "aws_route53_zone" "private" {
     vpc_id = aws_vpc.this.id
   }
 
-  tags = local.default_tags
+  comment = "managed by terraform"
 }
 ```
 
 ```yaml
-actions:
-    - "ec2:DescribeAvailabilityZones"
-optional:
-    vpc:
-        vpc_id:
-            - route53:AssociateVPCWithHostedZone
-            - route53:DisassociateVPCFromHostedZone
-    tags:
-        - route53:ChangeTagsForResource
+allow:
+  - "route53:List*"
+  - "route53:Get*"
+  - "route53:CreateHostedZone"
+  - "route53:DeleteHostedZone"
+conditional:
+  vpc:
+    vpc_id:
+      - route53:AssociateVPCWithHostedZone
+      - route53:DisassociateVPCFromHostedZone
+  comment:
+    - route53:UpdateHostedZoneComment
 ```
 
 We have to assume that nesting can have any depth. To keep it simple we only check for existence of the nested property in the code, not for a specific value.
 Valid block types are `resource`, `data`, `ephemeral`, `action`. `action` is a fairly new block type available in terraform core: https://developer.hashicorp.com/terraform/language/block/action
 Yaml files are available as an external source (git repository). The repository is cloned and each block types is checked for the necessary permissions. If a yaml file does not exist, it is tracked separately to inform the user that these resources are missing in the output and manual adjustments are still required.
+
+```hcl
+resource "aws_s3_bucket" "example" {
+  bucket = "my-tf-test-bucket"
+}
+```
+It is possible to define an explicit deny on permissions:
+
+```yaml
+deny:
+  - "s3:GetObject"
+allow:
+  - "s3:List*"
+  - "s3:Get*"
+  - "s3:Describe*"
+```
 
 # Overall application
 
@@ -251,23 +270,23 @@ Structure of the mapping files is as follows:
 
 ```yaml
 # Example: aws/resource/aws_route53_zone.yaml
-actions:
+allow:
+  - "route53:List*"
+  - "route53:Get*"
   - "route53:CreateHostedZone"
   - "route53:DeleteHostedZone"
-  - "route53:GetHostedZone"
-  - "route53:ListResourceRecordSets"
-optional:
+conditional:
   vpc:
     vpc_id:
-      - "route53:AssociateVPCWithHostedZone"
-      - "route53:DisassociateVPCFromHostedZone"
-  tags:
-    - "route53:ChangeTagsForResource"
+      - route53:AssociateVPCWithHostedZone
+      - route53:DisassociateVPCFromHostedZone
+  comment:
+    - route53:UpdateHostedZoneComment
 ```
 
-The permissions under `optional` are only relevant if the path in terraform exists. Each index under `optional` can be either a block or a property in terraform.
+The permissions under `conditional` are only relevant if the path in terraform exists. Each index under `conditional` can be either a block or a property in terraform.
 
-For the example above `vpc` is a block within `aws_route53_zone` with having a property `vpc_id`. Whereas `tags` is a property of `aws_route53_zone`.
+For the example above `vpc` is a block within `aws_route53_zone` with having a property `vpc_id`. Whereas `comment` is a property of `aws_route53_zone`.
 
 ### Resource-to-Provider Mapping
 
@@ -298,8 +317,10 @@ This approach was chosen because `role_arn` values often contain Terraform varia
 ### JSON/HCL formats
 
 + We don't set the `Sid`.
-+ `Effect` is always `Allow`
++ `Effect` for `allow` and `conditional` in the mapping file is always `Allow`
++ `Effect` for `deny` in the mapping file is always `Deny`
 + `Resource` is always `*`
++ Due to how AWS IAM policies work, there must be separate statements for `"Effect": "Allow"` and `"Effect": "Deny"`
 + If the output is stdout then simply print each result one after another separated by a newline. Separated with `----------- {OUTPUT_NAME} -----------`
 + If `--output-dir` is set, create a file for each result in the specified directory. The file contains only the JSON or HCL code (no headers). File name structure: `{OUTPUT_NAME}.{EXTENSION}`. Example: `NetworkDeployer.json`
 
@@ -440,11 +461,11 @@ This is explicitly called out in the `--help` output as a disclaimer.
 
 **Rationale:** Prevents memory exhaustion from accidentally processing large binary files or generated code. Terraform files are typically small; a 10MB limit is generous while still providing protection.
 
-## Effect is always `Allow`
+## The primary focus lies on `Allow` for both `allow` and `conditional`
 
-**Decision:** Generated policy statements always have `"Effect": "Allow"`.
+**Decision:** Generated policy are primarily using `"Effect": "Allow"`. `"Effect": "Deny"` is only used for actions that allow a role to read data.
 
-**Rationale:** The tool identifies permissions *needed* to deploy resources. Deny statements are a different use case (restricting what can be done) that requires human judgment about security boundaries.
+**Rationale:** The tool identifies permissions *needed* to deploy resources. By default, roles start with no permission. It's easy and straight forward to just add what the role is allowed to do. Complex statements are more difficult to read and to maintain in the mapping repo. Allowing to read everything using a wildcard with a `Deny` override for a single action is a rare case keeps the policy size small. A use case for this is preventing deployer roles to access business data.
 
 ## Using hcl-rs crate for HCL parsing
 
@@ -505,7 +526,7 @@ This is explicitly called out in the `--help` output as a disclaimer.
 
 ## 6 Internal mapping
 
-+ Implement the lookup for actions based on the mapping repo and enrich the internal data model
++ Implement the lookup for permissions based on the mapping repo and enrich the internal data model
 
 ## 7 Output
 

@@ -220,7 +220,7 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
-            "actions:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
+            "allow:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
         )
         .unwrap();
 
@@ -232,9 +232,9 @@ mod tests {
         assert!(result.is_some());
 
         let mapping = result.unwrap();
-        assert_eq!(mapping.actions.len(), 2);
-        assert!(mapping.actions.contains(&"s3:CreateBucket".to_string()));
-        assert!(mapping.actions.contains(&"s3:DeleteBucket".to_string()));
+        assert_eq!(mapping.allow.len(), 2);
+        assert!(mapping.allow.contains(&"s3:CreateBucket".to_string()));
+        assert!(mapping.allow.contains(&"s3:DeleteBucket".to_string()));
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
-            "actions:\n  - s3:CreateBucket",
+            "allow:\n  - s3:CreateBucket",
         )
         .unwrap();
 
@@ -262,7 +262,7 @@ mod tests {
         // Both should return Some with same data
         assert!(first.is_some());
         assert!(second.is_some());
-        assert_eq!(first.unwrap().actions, second.unwrap().actions);
+        assert_eq!(first.unwrap().allow, second.unwrap().allow);
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
         fs::create_dir_all(temp_dir.path().join("aws/data")).unwrap();
         fs::write(
             temp_dir.path().join("aws/data/aws_availability_zones.yaml"),
-            "actions:\n  - ec2:DescribeAvailabilityZones",
+            "allow:\n  - ec2:DescribeAvailabilityZones",
         )
         .unwrap();
 
@@ -303,17 +303,17 @@ mod tests {
     }
 
     #[test]
-    fn loader_handles_optional_actions() {
+    fn loader_handles_conditional_actions() {
         let temp_dir = TempDir::new().unwrap();
 
-        // Create mapping file with optional
+        // Create mapping file with conditional
         fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
         fs::write(
             temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
             r#"
-actions:
+allow:
   - s3:CreateBucket
-optional:
+conditional:
   tags:
     - s3:PutBucketTagging
 "#,
@@ -328,7 +328,7 @@ optional:
         assert!(result.is_some());
 
         let mapping = result.unwrap();
-        assert!(!mapping.optional.is_none());
+        assert!(!mapping.conditional.is_none());
     }
 
     #[test]

@@ -15,7 +15,7 @@ use ratatui::{
 use std::collections::HashSet;
 use std::io::{stdout, Stdout};
 
-use crate::action::{compute_selected_actions, Action};
+use crate::action::{compute_selected_actions, Action, ComputedActions, SelectedActions};
 use crate::block_type::BlockType;
 use crate::service::ServiceReference;
 
@@ -296,7 +296,8 @@ const ACTION_WARNING: &str =
 struct ActionSelector<'a> {
     actions: &'a [Action],
     service_prefix: &'a str,
-    selected_indices: HashSet<usize>,
+    allow_indices: HashSet<usize>,
+    deny_indices: HashSet<usize>,
     filtered_indices: Vec<usize>,
     cursor_position: usize,
     list_state: ListState,
@@ -305,14 +306,16 @@ struct ActionSelector<'a> {
 
 impl<'a> ActionSelector<'a> {
     fn new(actions: &'a [Action], service_prefix: &'a str, preselected_indices: &[usize]) -> Self {
-        let selected_indices: HashSet<usize> = preselected_indices.iter().copied().collect();
+        let allow_indices: HashSet<usize> = preselected_indices.iter().copied().collect();
+        let deny_indices: HashSet<usize> = HashSet::new();
         let filtered_indices: Vec<usize> = (0..actions.len()).collect();
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         Self {
             actions,
             service_prefix,
-            selected_indices,
+            allow_indices,
+            deny_indices,
             filtered_indices,
             cursor_position: 0,
             list_state,
@@ -354,32 +357,37 @@ impl<'a> ActionSelector<'a> {
         self.filtered_indices.get(self.cursor_position).copied()
     }
 
-    fn toggle_current(&mut self) {
+    fn cycle_current(&mut self) {
         if let Some(original_index) = self.current_original_index() {
-            if self.selected_indices.contains(&original_index) {
-                self.selected_indices.remove(&original_index);
+            if self.allow_indices.contains(&original_index) {
+                // allow -> deny
+                self.allow_indices.remove(&original_index);
+                self.deny_indices.insert(original_index);
+            } else if self.deny_indices.contains(&original_index) {
+                // deny -> deselected
+                self.deny_indices.remove(&original_index);
             } else {
-                self.selected_indices.insert(original_index);
+                // deselected -> allow
+                self.allow_indices.insert(original_index);
             }
         }
     }
 
     fn toggle_all(&mut self) {
-        // Toggle all visible (filtered) actions
-        let all_visible_selected = self
-            .filtered_indices
-            .iter()
-            .all(|i| self.selected_indices.contains(i));
+        let all_visible_deselected = self.filtered_indices.iter().all(|i| {
+            !self.allow_indices.contains(i) && !self.deny_indices.contains(i)
+        });
 
-        if all_visible_selected {
-            // Deselect all visible
+        if all_visible_deselected {
+            // All visible are deselected -> add all to allow
             for &i in &self.filtered_indices {
-                self.selected_indices.remove(&i);
+                self.allow_indices.insert(i);
             }
         } else {
-            // Select all visible
+            // At least one visible is in allow or deny -> deselect all visible
             for &i in &self.filtered_indices {
-                self.selected_indices.insert(i);
+                self.allow_indices.remove(&i);
+                self.deny_indices.remove(&i);
             }
         }
     }
@@ -399,11 +407,16 @@ impl<'a> ActionSelector<'a> {
     }
 
     fn can_confirm(&self) -> bool {
-        !self.selected_indices.is_empty()
+        !self.allow_indices.is_empty() || !self.deny_indices.is_empty()
     }
 
-    fn get_selected_actions_display(&self) -> Vec<String> {
-        compute_selected_actions(self.service_prefix, self.actions, &self.selected_indices)
+    fn get_computed_actions(&self) -> ComputedActions {
+        compute_selected_actions(
+            self.service_prefix,
+            self.actions,
+            &self.allow_indices,
+            &self.deny_indices,
+        )
     }
 }
 
@@ -435,20 +448,21 @@ fn render_available_actions(frame: &mut Frame, area: Rect, selector: &mut Action
         .enumerate()
         .map(|(display_index, &original_index)| {
             let action = &selector.actions[original_index];
-            let checkbox = if selector.selected_indices.contains(&original_index) {
-                "[x]"
-            } else {
-                "[ ]"
-            };
+            let (checkbox, state_style) =
+                if selector.allow_indices.contains(&original_index) {
+                    ("[✓]", Style::default().fg(Color::Green))
+                } else if selector.deny_indices.contains(&original_index) {
+                    ("[✗]", Style::default().fg(Color::Red))
+                } else {
+                    ("[ ]", Style::default())
+                };
             let content = format!("{} {}", checkbox, action.name);
             let style = if display_index == selector.cursor_position {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
-            } else if selector.selected_indices.contains(&original_index) {
-                Style::default().fg(Color::Green)
             } else {
-                Style::default()
+                state_style
             };
             ListItem::new(content).style(style)
         })
@@ -468,12 +482,39 @@ fn render_available_actions(frame: &mut Frame, area: Rect, selector: &mut Action
 }
 
 fn render_selected_actions(frame: &mut Frame, area: Rect, selector: &ActionSelector) {
-    let selected_display = selector.get_selected_actions_display();
+    let computed = selector.get_computed_actions();
+    let mut items: Vec<ListItem> = Vec::new();
 
-    let items: Vec<ListItem> = selected_display
-        .iter()
-        .map(|action| ListItem::new(action.as_str()).style(Style::default().fg(Color::Cyan)))
-        .collect();
+    // UI shows Allow before Deny (per spec section 3.5).
+    // Note: YAML output uses the opposite order (deny before allow) per AWS IAM convention.
+    if !computed.allow.is_empty() {
+        items.push(
+            ListItem::new("Allow:")
+                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        );
+        for action in &computed.allow {
+            items.push(
+                ListItem::new(format!("  {}", action))
+                    .style(Style::default().fg(Color::Cyan)),
+            );
+        }
+    }
+
+    if !computed.deny.is_empty() {
+        if !computed.allow.is_empty() {
+            items.push(ListItem::new(""));
+        }
+        items.push(
+            ListItem::new("Deny:")
+                .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+        );
+        for action in &computed.deny {
+            items.push(
+                ListItem::new(format!("  {}", action))
+                    .style(Style::default().fg(Color::Red)),
+            );
+        }
+    }
 
     let list = List::new(items).block(
         Block::default()
@@ -503,7 +544,7 @@ fn render_action_controls(frame: &mut Frame, area: Rect, can_confirm: bool) {
 
     let controls = Line::from(vec![
         Span::styled("[SPACE]", Style::default().fg(Color::Cyan)),
-        Span::raw(" Toggle  "),
+        Span::raw(" Cycle (allow/deny/none)  "),
         Span::styled("[TAB]", Style::default().fg(Color::Cyan)),
         Span::raw(" Toggle all  "),
         Span::styled("[ENTER]", confirm_style),
@@ -523,7 +564,7 @@ pub fn select_actions(
     actions: &[Action],
     service_prefix: &str,
     preselected_indices: &[usize],
-) -> Result<HashSet<usize>> {
+) -> Result<SelectedActions> {
     let _guard = TerminalGuard::new()?;
     let mut terminal = create_terminal()?;
     let mut selector = ActionSelector::new(actions, service_prefix, preselected_indices);
@@ -541,11 +582,14 @@ pub fn select_actions(
             match key.code {
                 KeyCode::Up => selector.move_up(),
                 KeyCode::Down => selector.move_down(),
-                KeyCode::Char(' ') => selector.toggle_current(),
+                KeyCode::Char(' ') => selector.cycle_current(),
                 KeyCode::Tab => selector.toggle_all(),
                 KeyCode::Enter => {
                     if selector.can_confirm() {
-                        return Ok(selector.selected_indices);
+                        return Ok(SelectedActions {
+                            allow_indices: selector.allow_indices,
+                            deny_indices: selector.deny_indices,
+                        });
                     }
                 }
                 KeyCode::Backspace => selector.remove_char(),
@@ -688,10 +732,10 @@ mod tests {
         let actions = create_test_actions();
         let mut selector = ActionSelector::new(&actions, "ec2", &[0, 2, 4]);
 
-        // Initially selected: CreateSubnet (0), DescribeSubnets (2), ListSubnets (4)
-        assert!(selector.selected_indices.contains(&0));
-        assert!(selector.selected_indices.contains(&2));
-        assert!(selector.selected_indices.contains(&4));
+        // Initially allowed: CreateSubnet (0), DescribeSubnets (2), ListSubnets (4)
+        assert!(selector.allow_indices.contains(&0));
+        assert!(selector.allow_indices.contains(&2));
+        assert!(selector.allow_indices.contains(&4));
 
         // Apply filter
         selector.add_char('D');
@@ -702,13 +746,13 @@ mod tests {
         assert_eq!(selector.filtered_indices.len(), 1);
 
         // But original selections still preserved
-        assert!(selector.selected_indices.contains(&0));
-        assert!(selector.selected_indices.contains(&2));
-        assert!(selector.selected_indices.contains(&4));
+        assert!(selector.allow_indices.contains(&0));
+        assert!(selector.allow_indices.contains(&2));
+        assert!(selector.allow_indices.contains(&4));
     }
 
     #[test]
-    fn action_selector_toggle_current_uses_original_index() {
+    fn action_selector_cycle_current_uses_original_index() {
         let actions = create_test_actions();
         let mut selector = ActionSelector::new(&actions, "ec2", &[]);
 
@@ -721,16 +765,17 @@ mod tests {
         assert_eq!(selector.filtered_indices.len(), 1);
         assert_eq!(selector.filtered_indices[0], 1);
 
-        // Toggle current (cursor at 0 in filtered list = original index 1)
-        selector.toggle_current();
+        // Cycle current (cursor at 0 in filtered list = original index 1)
+        // deselected -> allow
+        selector.cycle_current();
 
-        // Should toggle original index 1 (DeleteSubnet)
-        assert!(selector.selected_indices.contains(&1));
-        assert!(!selector.selected_indices.contains(&0));
+        // Should add original index 1 (DeleteSubnet) to allow
+        assert!(selector.allow_indices.contains(&1));
+        assert!(!selector.allow_indices.contains(&0));
     }
 
     #[test]
-    fn action_selector_toggle_all_only_affects_visible() {
+    fn action_selector_toggle_all_selects_deselected_to_allow() {
         let actions = create_test_actions();
         let mut selector = ActionSelector::new(&actions, "ec2", &[]);
 
@@ -741,36 +786,42 @@ mod tests {
         // DescribeSubnets (2) and DeleteSubnet (1) should be visible
         assert_eq!(selector.filtered_indices.len(), 2);
 
-        // Toggle all visible
+        // Toggle all visible (all deselected -> allow)
         selector.toggle_all();
 
-        // Only indices 1 and 2 should be selected
-        assert_eq!(selector.selected_indices.len(), 2);
-        assert!(selector.selected_indices.contains(&1));
-        assert!(selector.selected_indices.contains(&2));
-        assert!(!selector.selected_indices.contains(&0));
-        assert!(!selector.selected_indices.contains(&3));
+        // Only indices 1 and 2 should be in allow
+        assert_eq!(selector.allow_indices.len(), 2);
+        assert!(selector.allow_indices.contains(&1));
+        assert!(selector.allow_indices.contains(&2));
+        assert!(!selector.allow_indices.contains(&0));
+        assert!(!selector.allow_indices.contains(&3));
+        assert!(selector.deny_indices.is_empty());
     }
 
     #[test]
-    fn action_selector_toggle_all_deselects_when_all_visible_selected() {
+    fn action_selector_toggle_all_deselects_allow_and_deny() {
         let actions = create_test_actions();
         let mut selector = ActionSelector::new(&actions, "ec2", &[1, 2]);
+
+        // Put index 2 into deny manually (cycle: allow -> deny)
+        selector.allow_indices.remove(&2);
+        selector.deny_indices.insert(2);
 
         // Apply filter to show only "Describe*" and "Delete*"
         selector.add_char('D');
         selector.add_char('e');
 
-        // Both visible items (1, 2) are already selected
-        assert!(selector.selected_indices.contains(&1));
-        assert!(selector.selected_indices.contains(&2));
+        // Visible: DeleteSubnet (1, in allow), DescribeSubnets (2, in deny)
+        assert!(selector.allow_indices.contains(&1));
+        assert!(selector.deny_indices.contains(&2));
 
-        // Toggle all should deselect visible
+        // Toggle all should deselect all visible (from allow or deny)
         selector.toggle_all();
 
-        // Neither should be selected now
-        assert!(!selector.selected_indices.contains(&1));
-        assert!(!selector.selected_indices.contains(&2));
+        assert!(!selector.allow_indices.contains(&1));
+        assert!(!selector.allow_indices.contains(&2));
+        assert!(!selector.deny_indices.contains(&1));
+        assert!(!selector.deny_indices.contains(&2));
     }
 
     #[test]
@@ -813,5 +864,91 @@ mod tests {
         // Apply filter - cursor should reset to 0
         selector.add_char('L');
         assert_eq!(selector.cursor_position, 0);
+    }
+
+    #[test]
+    fn spacebar_cycles_deselected_to_allow_to_deny_to_deselected() {
+        let actions = create_test_actions();
+        let mut selector = ActionSelector::new(&actions, "ec2", &[]);
+
+        // Initially deselected
+        assert!(!selector.allow_indices.contains(&0));
+        assert!(!selector.deny_indices.contains(&0));
+
+        // Cycle 1: deselected -> allow
+        selector.cycle_current();
+        assert!(selector.allow_indices.contains(&0));
+        assert!(!selector.deny_indices.contains(&0));
+
+        // Cycle 2: allow -> deny
+        selector.cycle_current();
+        assert!(!selector.allow_indices.contains(&0));
+        assert!(selector.deny_indices.contains(&0));
+
+        // Cycle 3: deny -> deselected
+        selector.cycle_current();
+        assert!(!selector.allow_indices.contains(&0));
+        assert!(!selector.deny_indices.contains(&0));
+    }
+
+    #[test]
+    fn tab_never_puts_actions_into_deny() {
+        let actions = create_test_actions();
+        let mut selector = ActionSelector::new(&actions, "ec2", &[]);
+
+        // Toggle all (all deselected -> allow)
+        selector.toggle_all();
+        assert!(selector.deny_indices.is_empty());
+
+        // Toggle all again (all allowed -> deselected)
+        selector.toggle_all();
+        assert!(selector.deny_indices.is_empty());
+        assert!(selector.allow_indices.is_empty());
+    }
+
+    #[test]
+    fn tab_only_affects_filtered_visible_actions() {
+        let actions = create_test_actions();
+        // Pre-select index 0 (CreateSubnet) into allow
+        let mut selector = ActionSelector::new(&actions, "ec2", &[0]);
+
+        // Also put index 5 (ModifySubnet) into deny manually
+        selector.deny_indices.insert(5);
+
+        // Filter to show only "List*"
+        selector.add_char('L');
+        selector.add_char('i');
+        selector.add_char('s');
+        selector.add_char('t');
+
+        // Only ListSubnets (4) visible
+        assert_eq!(selector.filtered_indices.len(), 1);
+
+        // Toggle all (all visible deselected -> allow)
+        selector.toggle_all();
+
+        // ListSubnets now in allow
+        assert!(selector.allow_indices.contains(&4));
+        // Previous selections untouched
+        assert!(selector.allow_indices.contains(&0));
+        assert!(selector.deny_indices.contains(&5));
+    }
+
+    #[test]
+    fn can_confirm_true_with_only_deny_actions() {
+        let actions = create_test_actions();
+        let mut selector = ActionSelector::new(&actions, "ec2", &[]);
+
+        selector.deny_indices.insert(0);
+
+        assert!(selector.can_confirm());
+    }
+
+    #[test]
+    fn can_confirm_false_when_both_sets_empty() {
+        let actions = create_test_actions();
+        let selector = ActionSelector::new(&actions, "ec2", &[]);
+
+        assert!(!selector.can_confirm());
     }
 }

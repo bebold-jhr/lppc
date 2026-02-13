@@ -81,27 +81,34 @@ fn run() -> Result<()> {
         preselected_action_indices.len()
     );
 
-    let selected_action_indices = select_actions(
+    let selected = select_actions(
         &service_actions.actions,
         &selected_service.service,
         &preselected_action_indices,
     )?;
-    info!("Selected {} actions", selected_action_indices.len());
-
-    let final_actions = compute_selected_actions(
-        &selected_service.service,
-        &service_actions.actions,
-        &selected_action_indices,
+    info!(
+        "Selected {} allow actions and {} deny actions",
+        selected.allow_indices.len(),
+        selected.deny_indices.len()
     );
 
-    debug!("Final actions: {:?}", final_actions);
+    let computed = compute_selected_actions(
+        &selected_service.service,
+        &service_actions.actions,
+        &selected.allow_indices,
+        &selected.deny_indices,
+    );
+
+    debug!("Allow actions: {:?}", computed.allow);
+    debug!("Deny actions: {:?}", computed.deny);
 
     let config = GeneratorConfig {
         working_dir: &working_dir,
         block_type,
         terraform_type: &terraform_type,
         service_reference_url: &selected_service.url,
-        actions: final_actions,
+        allow_actions: computed.allow,
+        deny_actions: computed.deny,
     };
 
     let generated_files = generate_files(&config)?;

@@ -34,7 +34,7 @@ Switch to `saphyr-serde` once it's released, enabling automatic serde-based dese
 Once `saphyr-serde` is released, the migration involves:
 1. Replace `saphyr` dependency with `saphyr-serde`
 2. Remove manual deserialization code in `src/mapping/loader.rs`
-3. Add `#[derive(Deserialize)]` to `ActionMapping` and `OptionalActions` types
+3. Add `#[derive(Deserialize)]` to `ActionMapping` and `ConditionalActions` types
 4. Update parsing calls from manual API to `saphyr_serde::from_str()`
 
 ---
