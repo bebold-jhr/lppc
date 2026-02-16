@@ -31,7 +31,7 @@ jobs:
           cargo test --lib
         shell: bash
 
-      - name: unit tests
+      - name: integration tests
         working-directory: lppc-cli
         run: |
           cargo test --test integration -- --test-threads=1
