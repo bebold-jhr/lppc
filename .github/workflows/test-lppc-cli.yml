@@ -25,8 +25,14 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: lppc-cli
+      - name: unit tests
         working-directory: lppc-cli
         run: |
           cargo test --lib
+        shell: bash
+
+      - name: unit tests
+        working-directory: lppc-cli
+        run: |
+          cargo test --test integration -- --test-threads=1
         shell: bash

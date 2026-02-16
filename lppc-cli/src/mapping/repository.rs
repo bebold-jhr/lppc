@@ -33,9 +33,20 @@ pub enum GitError {
 pub struct GitOperations;
 
 impl GitOperations {
+    /// Creates a git command with interactive prompts disabled.
+    ///
+    /// Sets `GIT_TERMINAL_PROMPT=0` to prevent git from prompting for
+    /// credentials, which would hang in non-interactive environments
+    /// like CI/CD pipelines.
+    fn git_command() -> Command {
+        let mut cmd = Command::new("git");
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
+        cmd
+    }
+
     /// Checks if git is available on the system.
     fn check_git_available() -> Result<(), GitError> {
-        match Command::new("git").arg("--version").output() {
+        match Self::git_command().arg("--version").output() {
             Ok(output) if output.status.success() => Ok(()),
             Ok(_) => Err(GitError::GitNotInstalled),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(GitError::GitNotInstalled),
@@ -124,7 +135,7 @@ impl GitOperations {
 
         // Run git clone with depth=1 for shallow clone
         // Use "--" to separate options from URL argument for security
-        let output = Command::new("git")
+        let output = Self::git_command()
             .args([
                 "clone",
                 "--depth",
@@ -160,7 +171,7 @@ impl GitOperations {
         }
 
         // Fetch with depth=1
-        let fetch_output = Command::new("git")
+        let fetch_output = Self::git_command()
             .current_dir(repo_path)
             .args(["fetch", "--depth", "1", "origin"])
             .output()?;
@@ -172,7 +183,7 @@ impl GitOperations {
         }
 
         // Get the default branch name
-        let branch_output = Command::new("git")
+        let branch_output = Self::git_command()
             .current_dir(repo_path)
             .args(["symbolic-ref", "--short", "HEAD"])
             .output()?;
@@ -193,7 +204,7 @@ impl GitOperations {
         };
 
         // Reset to origin/<branch>
-        let reset_output = Command::new("git")
+        let reset_output = Self::git_command()
             .current_dir(repo_path)
             .args(["reset", "--hard", &format!("origin/{}", branch_name)])
             .output()?;
@@ -205,7 +216,7 @@ impl GitOperations {
         }
 
         // Get the current commit hash for logging
-        let rev_output = Command::new("git")
+        let rev_output = Self::git_command()
             .current_dir(repo_path)
             .args(["rev-parse", "--short", "HEAD"])
             .output()?;
@@ -236,7 +247,7 @@ impl GitOperations {
 
         // Use git ls-remote to check connectivity (lightweight check)
         // Use "--" to separate options from URL argument for security
-        match Command::new("git")
+        match Self::git_command()
             .args(["ls-remote", "--exit-code", "-h", "--", url])
             .output()
         {
