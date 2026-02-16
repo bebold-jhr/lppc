@@ -1,6 +1,6 @@
 [package]
 name = "lppc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Least Privilege Policy Creator - Generate minimal AWS IAM policies from Terraform code"
 license = "MIT"
