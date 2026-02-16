@@ -2,6 +2,7 @@ mod action;
 mod block_type;
 mod cli;
 mod generator;
+mod provider_versions;
 mod schema;
 mod service;
 mod ui;
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 use action::{compute_selected_actions, get_preselected_indices, load_service_actions};
 use cli::Args;
 use generator::{generate_files, print_success_message, GeneratorConfig};
+use provider_versions::resolve_provider_versions;
 use schema::{filter_unmapped_types, load_terraform_types};
 use service::{extract_service_hint, find_best_match, load_service_references};
 use ui::{select_actions, select_block_type, select_service_prefix, select_terraform_type};
@@ -102,6 +104,12 @@ fn run() -> Result<()> {
     debug!("Allow actions: {:?}", computed.allow);
     debug!("Deny actions: {:?}", computed.deny);
 
+    let provider_versions = resolve_provider_versions()?;
+    info!(
+        "Resolved provider versions: aws={}, time={}, random={}",
+        provider_versions.aws, provider_versions.time, provider_versions.random
+    );
+
     let config = GeneratorConfig {
         working_dir: &working_dir,
         block_type,
@@ -109,6 +117,7 @@ fn run() -> Result<()> {
         service_reference_url: &selected_service.url,
         allow_actions: computed.allow,
         deny_actions: computed.deny,
+        provider_versions: &provider_versions,
     };
 
     let generated_files = generate_files(&config)?;

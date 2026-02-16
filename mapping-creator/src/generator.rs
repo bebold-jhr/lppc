@@ -4,6 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::block_type::BlockType;
+use crate::provider_versions::ProviderVersions;
 
 const AWS_DOCUMENTATION_URL: &str = "https://docs.aws.amazon.com/service-authorization/latest/reference/reference_policies_actions-resources-contextkeys.html";
 const TERRAFORM_REGISTRY_BASE: &str = "https://registry.terraform.io/providers/hashicorp/aws/latest/docs";
@@ -24,6 +25,7 @@ pub struct GeneratorConfig<'a> {
     pub service_reference_url: &'a str,
     pub allow_actions: Vec<String>,
     pub deny_actions: Vec<String>,
+    pub provider_versions: &'a ProviderVersions,
 }
 
 pub fn generate_files(config: &GeneratorConfig) -> Result<GeneratedFiles> {
@@ -155,7 +157,7 @@ fn generate_integration_tests(config: &GeneratorConfig) -> Result<TestFiles> {
     fs::create_dir_all(&tests_subdir)
         .with_context(|| format!("Failed to create test directory: {}", tests_subdir.display()))?;
 
-    let providers_content = generate_providers_tf();
+    let providers_content = generate_providers_tf(config.provider_versions);
     let providers_path = test_base_dir.join("providers.tf");
     fs::write(&providers_path, providers_content)
         .with_context(|| format!("Failed to write providers.tf: {}", providers_path.display()))?;
@@ -194,24 +196,27 @@ fn generate_integration_tests(config: &GeneratorConfig) -> Result<TestFiles> {
     })
 }
 
-fn generate_providers_tf() -> &'static str {
-    r#"terraform {
-  required_providers {
-    aws = {
+fn generate_providers_tf(versions: &ProviderVersions) -> String {
+    format!(
+        r#"terraform {{
+  required_providers {{
+    aws = {{
       source  = "hashicorp/aws"
-      version = "6.7.0"
-    }
-    time = {
+      version = "{}"
+    }}
+    time = {{
       source  = "hashicorp/time"
-      version = "0.13.1"
-    }
-    random = {
+      version = "{}"
+    }}
+    random = {{
       source  = "hashicorp/random"
-      version = "3.7.2"
-    }
-  }
-}
-"#
+      version = "{}"
+    }}
+  }}
+}}
+"#,
+        versions.aws, versions.time, versions.random
+    )
 }
 
 fn generate_main_tf(block_type: BlockType, terraform_type: &str) -> String {
@@ -313,6 +318,14 @@ mod tests {
         TempDir::new().unwrap()
     }
 
+    fn test_provider_versions() -> ProviderVersions {
+        ProviderVersions {
+            aws: "6.7.0".to_string(),
+            time: "0.13.1".to_string(),
+            random: "3.7.2".to_string(),
+        }
+    }
+
     #[test]
     fn generate_terraform_doc_url_for_resource() {
         let url = generate_terraform_doc_url(BlockType::Resource, "aws_subnet");
@@ -360,6 +373,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:List*".to_string(), "ec2:CreateSubnet".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         let result = generate_files(&config);
@@ -385,6 +399,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateSubnet".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         let result = generate_files(&config);
@@ -413,6 +428,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateSubnet".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         let result = generate_files(&config);
@@ -432,6 +448,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateVpc".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         generate_files(&config).unwrap();
@@ -458,6 +475,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateVpc".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         generate_files(&config).unwrap();
@@ -481,6 +499,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateVpc".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         generate_files(&config).unwrap();
@@ -504,6 +523,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:DescribeImages".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         generate_files(&config).unwrap();
@@ -527,6 +547,7 @@ mod tests {
             service_reference_url: "https://example.com/secretsmanager.json",
             allow_actions: vec!["secretsmanager:GetSecretValue".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         generate_files(&config).unwrap();
@@ -555,6 +576,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateVpc".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         generate_files(&config).unwrap();
@@ -582,6 +604,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:DescribeImages".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         let result = generate_files(&config).unwrap();
@@ -622,6 +645,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:CreateSubnet".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         let result = generate_files(&config);
@@ -646,6 +670,7 @@ mod tests {
             service_reference_url: "https://example.com/ec2.json",
             allow_actions: vec!["ec2:RunInstances".to_string()],
             deny_actions: vec![],
+            provider_versions: &test_provider_versions(),
         };
 
         let result = generate_files(&config);
@@ -694,6 +719,23 @@ mod tests {
 
         assert!(yaml.contains("deny:\n"));
         assert!(!yaml.contains("allow:"));
+    }
+
+    #[test]
+    fn generate_providers_tf_uses_dynamic_versions() {
+        let versions = ProviderVersions {
+            aws: "7.0.0".to_string(),
+            time: "1.0.0".to_string(),
+            random: "4.0.0".to_string(),
+        };
+        let content = generate_providers_tf(&versions);
+
+        assert!(content.contains("version = \"7.0.0\""));
+        assert!(content.contains("version = \"1.0.0\""));
+        assert!(content.contains("version = \"4.0.0\""));
+        assert!(content.contains("hashicorp/aws"));
+        assert!(content.contains("hashicorp/time"));
+        assert!(content.contains("hashicorp/random"));
     }
 
     #[test]
