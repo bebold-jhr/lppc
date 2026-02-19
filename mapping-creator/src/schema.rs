@@ -14,6 +14,21 @@ fn is_valid_type_name(name: &str) -> bool {
         && !name.contains("..")
 }
 
+pub fn get_available_block_types(working_dir: &Path) -> Result<Vec<BlockType>> {
+    let mut available = Vec::new();
+
+    for block_type in BlockType::ALL {
+        let types = load_terraform_types(working_dir, block_type)?;
+        let unmapped = filter_unmapped_types(working_dir, block_type, types);
+
+        if !unmapped.is_empty() {
+            available.push(block_type);
+        }
+    }
+
+    Ok(available)
+}
+
 pub fn load_terraform_types(working_dir: &Path, block_type: BlockType) -> Result<Vec<String>> {
     let schema_path = working_dir.join(block_type.schema_file());
 
@@ -77,6 +92,76 @@ mod tests {
         }
 
         temp_dir
+    }
+
+    fn write_schema_file(temp_dir: &TempDir, block_type: BlockType, types: &[&str]) {
+        let schema_path = temp_dir.path().join(block_type.schema_file());
+        fs::write(&schema_path, serde_json::to_string(types).unwrap()).unwrap();
+    }
+
+    fn write_all_schema_files(temp_dir: &TempDir, types: &[&str]) {
+        for block_type in BlockType::ALL {
+            write_schema_file(temp_dir, block_type, types);
+        }
+    }
+
+    #[test]
+    fn get_available_block_types_returns_all_when_no_mappings_exist() {
+        let temp_dir = setup_test_dir();
+        write_all_schema_files(&temp_dir, &["aws_subnet", "aws_vpc"]);
+
+        let result = get_available_block_types(temp_dir.path()).unwrap();
+
+        assert_eq!(result.len(), 4);
+        assert_eq!(result, BlockType::ALL.to_vec());
+    }
+
+    #[test]
+    fn get_available_block_types_excludes_fully_mapped_block_type() {
+        let temp_dir = setup_test_dir();
+        write_all_schema_files(&temp_dir, &["aws_subnet", "aws_vpc"]);
+
+        // Fully map the resource block type
+        let mapping_dir = temp_dir.path().join(BlockType::Resource.mapping_dir());
+        fs::write(mapping_dir.join("aws_subnet.yml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_vpc.yml"), "# mapping").unwrap();
+
+        let result = get_available_block_types(temp_dir.path()).unwrap();
+
+        assert_eq!(result.len(), 3);
+        assert!(!result.contains(&BlockType::Resource));
+        assert!(result.contains(&BlockType::Action));
+        assert!(result.contains(&BlockType::Data));
+        assert!(result.contains(&BlockType::Ephemeral));
+    }
+
+    #[test]
+    fn get_available_block_types_returns_empty_when_all_fully_mapped() {
+        let temp_dir = setup_test_dir();
+        let types = &["aws_subnet"];
+        write_all_schema_files(&temp_dir, types);
+
+        // Map the single type in every block type
+        for block_type in BlockType::ALL {
+            let mapping_dir = temp_dir.path().join(block_type.mapping_dir());
+            fs::write(mapping_dir.join("aws_subnet.yml"), "# mapping").unwrap();
+        }
+
+        let result = get_available_block_types(temp_dir.path()).unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn get_available_block_types_fails_when_schema_file_missing() {
+        let temp_dir = setup_test_dir();
+        // Don't write any schema files
+
+        let result = get_available_block_types(temp_dir.path());
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to read schema file"));
     }
 
     #[test]

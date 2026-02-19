@@ -259,14 +259,14 @@ fn run_single_selector(
 // Public Selection Functions
 // ============================================================================
 
-pub fn select_block_type() -> Result<BlockType> {
-    let options: Vec<String> = BlockType::ALL
+pub fn select_block_type(available_block_types: Vec<BlockType>) -> Result<BlockType> {
+    let options: Vec<String> = available_block_types
         .iter()
         .map(|bt| bt.as_str().to_string())
         .collect();
     let selected_index = run_single_selector(options, "Select a block type", 0, false)?;
 
-    Ok(BlockType::ALL[selected_index])
+    Ok(available_block_types[selected_index])
 }
 
 pub fn select_terraform_type(types: Vec<String>) -> Result<String> {
