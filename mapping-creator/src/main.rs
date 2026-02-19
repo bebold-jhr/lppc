@@ -16,7 +16,7 @@ use action::{compute_selected_actions, get_preselected_indices, load_service_act
 use cli::Args;
 use generator::{generate_files, print_success_message, GeneratorConfig};
 use provider_versions::resolve_provider_versions;
-use schema::{filter_unmapped_types, load_terraform_types};
+use schema::{filter_unmapped_types, get_available_block_types, load_terraform_types};
 use service::{extract_service_hint, find_best_match, load_service_references};
 use ui::{select_actions, select_block_type, select_service_prefix, select_terraform_type};
 
@@ -36,7 +36,13 @@ fn run() -> Result<()> {
 
     debug!("Working directory validated: {}", working_dir.display());
 
-    let block_type = select_block_type()?;
+    let available_block_types = get_available_block_types(&working_dir)?;
+    if available_block_types.is_empty() {
+        println!("All block types are fully mapped");
+        return Ok(());
+    }
+
+    let block_type = select_block_type(available_block_types)?;
     info!("Selected block type: {}", block_type);
 
     let all_types = load_terraform_types(&working_dir, block_type)?;

@@ -13,6 +13,7 @@ This tool is always supposed to be run on a local dev machine and is only meant 
 2. Select a block type.
 This can be one of `action`, `data`, `ephemeral`, `resource`. This acts as a pre-filter.
 The user is able to move the list with up and down arrow keys. Selection via `ENTER`.
+If there is no type of a block type left to require mapping the corresponding block type doesn't show up in the list.
 
 3. Select a type. Next the tool checks which terraform types still require a mapping. All available terraform block types have a list of available types.
 
