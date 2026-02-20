@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const GITHUB_API_BASE: &str = "https://api.github.com/repos/hashicorp/terraform-provider-";
-const CACHE_FILE_NAME: &str = "provider-versions.yml";
+const CACHE_FILE_NAME: &str = "provider-versions.yaml";
 const CACHE_MAX_AGE_HOURS: i64 = 24;
 const HTTP_TIMEOUT_SECONDS: u64 = 10;
 

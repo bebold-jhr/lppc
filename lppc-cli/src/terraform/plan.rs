@@ -669,14 +669,14 @@ mod tests {
         )
         .unwrap();
         fs::write(src.path().join("config.yaml"), "key: value").unwrap();
-        fs::write(src.path().join("data.yml"), "data: test").unwrap();
+        fs::write(src.path().join("data.yaml"), "data: test").unwrap();
 
         PlanExecutor::copy_terraform_files(src.path(), dest.path()).unwrap();
 
         assert!(dest.path().join("main.tf").exists());
         assert!(dest.path().join("policy.json").exists());
         assert!(dest.path().join("config.yaml").exists());
-        assert!(dest.path().join("data.yml").exists());
+        assert!(dest.path().join("data.yaml").exists());
     }
 
     #[test]

@@ -56,7 +56,7 @@ lppc-aws-mappings/
       {service}.json                   -- Per-service action definitions from AWS
   mappings/
     resource/
-      {terraform_type}.yml             -- Generated mapping files
+      {terraform_type}.yaml             -- Generated mapping files
     data/
     ephemeral/
     action/
@@ -244,7 +244,7 @@ main()
        6. load_terraform_types(working_dir, block_type)
             -> Read schema JSON, deserialize to Vec<String>
        7. filter_unmapped_types(working_dir, block_type, types)
-            -> Remove types that have existing .yml in mapping dir
+            -> Remove types that have existing .yaml in mapping dir
             -> Validate type names (path traversal check)
             -> If empty, print message and return Ok(())
        8. select_terraform_type(unmapped_types)      -- TUI: SingleSelector, filterable
@@ -274,7 +274,7 @@ main()
             -> Deny actions always listed individually (no wildcards)
             -> ComputedActions { allow, deny }
       17. resolve_provider_versions()
-            -> Check ~/.lppc/provider-versions.yml cache (24h expiry)
+            -> Check ~/.lppc/provider-versions.yaml cache (24h expiry)
             -> If fresh, use cached versions
             -> If stale/missing, fetch from GitHub API (3 GET requests)
             -> Partial failure: merge API successes with cached fallbacks
@@ -287,7 +287,7 @@ main()
                 -> Verify no existing file (bail if exists)
                 -> generate_terraform_doc_url()
                 -> generate_mapping_yaml()         -- Build YAML string manually
-                -> Write to mappings/{block_type}/{terraform_type}.yml
+                -> Write to mappings/{block_type}/{terraform_type}.yaml
             c. generate_integration_tests(config)
                 -> Verify no existing directory (bail if exists)
                 -> Create directory + tests/ subdirectory
@@ -352,7 +352,7 @@ The tool pre-selects likely choices based on heuristics:
 Every module that constructs filesystem paths from user-influenced data (terraform type names, service prefixes) validates the input against path traversal attacks. The validation pattern is consistent: reject empty strings, forward/backward slashes, null bytes, leading dots, and `..` sequences.
 
 ### Cache with Graceful Degradation (provider_versions.rs)
-Provider version resolution follows a cache-first strategy with 24-hour expiry. The cache file at `~/.lppc/provider-versions.yml` is shared with `lppc-cli`. On API failure, stale cached versions are used as fallback with a warning. Partial API failures merge successful results with cached values. The `last_updated` timestamp is only refreshed when all providers are successfully resolved, ensuring the next run retries failed providers.
+Provider version resolution follows a cache-first strategy with 24-hour expiry. The cache file at `~/.lppc/provider-versions.yaml` is shared with `lppc-cli`. On API failure, stale cached versions are used as fallback with a warning. Partial API failures merge successful results with cached values. The `last_updated` timestamp is only refreshed when all providers are successfully resolved, ensuring the next run retries failed providers.
 
 ### Testable Network Isolation (provider_versions.rs)
 The resolution logic accepts a fetcher function parameter (`impl Fn(&str) -> Result<String>`) to decouple it from the HTTP client. The public API (`resolve_provider_versions()`) passes the real `fetch_latest_version` function, while tests use mock fetchers (success, failure, partial) to exercise all cache/merge/fallback paths without network access.
@@ -375,7 +375,7 @@ The resolution logic accepts a fetcher function parameter (`impl Fn(&str) -> Res
 
 7. **Manual YAML generation**: The YAML mapping file is built via string concatenation rather than a YAML serialization library. This is acceptable given the simple, fixed structure of the output.
 
-8. **Dynamic provider versions**: The generated `providers.tf` uses dynamically resolved versions fetched from the GitHub API (`api.github.com/repos/hashicorp/terraform-provider-{name}/releases/latest`). Versions are cached at `~/.lppc/provider-versions.yml` with a 24-hour expiry. The cache is shared with `lppc-cli` and follows the same directory structure. On API failure, stale cached versions are used as fallback. If no cache exists and the API is unreachable, the tool fails with an error.
+8. **Dynamic provider versions**: The generated `providers.tf` uses dynamically resolved versions fetched from the GitHub API (`api.github.com/repos/hashicorp/terraform-provider-{name}/releases/latest`). Versions are cached at `~/.lppc/provider-versions.yaml` with a 24-hour expiry. The cache is shared with `lppc-cli` and follows the same directory structure. On API failure, stale cached versions are used as fallback. If no cache exists and the API is unreachable, the tool fails with an error.
 
 9. **Exit codes**: The tool exits with code 0 on success and code 1 for any error, including user cancellation (ESC/Ctrl+C in the TUI).
 
@@ -390,7 +390,7 @@ The resolution logic accepts a fetcher function parameter (`impl Fn(&str) -> Res
 | `src/main.rs` | ~215 | Entry point. Module declarations. `run()` orchestrates the full wizard pipeline including provider version resolution. `init_logging()` configures env_logger. `validate_working_directory()` resolves and canonicalizes the path. Unit tests for path validation. |
 | `src/cli.rs` | ~21 | `Args` struct with clap derive macros. Positional `working_dir: PathBuf` and optional `--verbose` flag. Includes disclaimer in help text. |
 | `src/block_type.rs` | ~146 | `BlockType` enum with four variants. `ALL` constant. Path methods for schema files, mapping directories, integration test directories, and Terraform documentation URLs. `Display` impl. Comprehensive unit tests. |
-| `src/schema.rs` | ~290 | `get_available_block_types()` checks each block type for unmapped terraform types and returns only those with work remaining. `load_terraform_types()` reads and parses schema JSON files. `filter_unmapped_types()` removes types that have existing `.yml` mapping files. `is_valid_type_name()` validates against path traversal. Unit tests including security edge cases. |
+| `src/schema.rs` | ~290 | `get_available_block_types()` checks each block type for unmapped terraform types and returns only those with work remaining. `load_terraform_types()` reads and parses schema JSON files. `filter_unmapped_types()` removes types that have existing `.yaml` mapping files. `is_valid_type_name()` validates against path traversal. Unit tests including security edge cases. |
 | `src/service.rs` | ~199 | `ServiceReference` serde type. `load_service_references()` reads the AWS service index JSON. `extract_service_hint()` derives a service prefix guess from a terraform type name. `find_best_match()` performs exact-match lookup. Unit tests cover parsing, hint extraction, and matching. |
 | `src/action.rs` | ~510 | `Action`, `ActionProperties`, `ActionAnnotations`, `ServiceActions` serde types. `SelectedActions` and `ComputedActions` structs for three-state selection. `load_service_actions()` reads per-service JSON with path traversal check. `get_preselected_indices()` identifies tagging/read actions. `compute_selected_actions()` applies deny-aware wildcard consolidation logic with disjointness assertion. Extensive unit tests including deny-specific scenarios. |
 | `src/ui.rs` | ~920 | **The largest file.** `TerminalGuard` RAII type. `SingleSelector` struct with filter, navigation, and rendering. `ActionSelector` struct with three-state selection (allow/deny/deselected), `cycle_current()` for SPACEBAR cycling, three-state `toggle_all()`, and split-pane rendering with separate Allow/Deny sections. Public functions: `select_block_type(available_block_types)` (accepts pre-filtered block types), `select_terraform_type()`, `select_service_prefix()`, `select_actions()` (returns `SelectedActions`). Left pane uses `[✓]` green / `[✗]` red / `[ ]` indicators. Unit tests for filter, selection preservation, cycling, toggle logic, and navigation. |

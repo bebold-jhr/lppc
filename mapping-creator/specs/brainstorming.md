@@ -27,7 +27,7 @@ Block type to schema file mapping:
 | action     | sources/terraform/action_schemas.json             |
 
 Each JSON file solely contains an array with type names like `aws_subnet`.
-These must be compared to the existence of mapping paths. Example: `mappings/resource/aws_subnet.yml`.
+These must be compared to the existence of mapping paths. Example: `mappings/resource/aws_subnet.yaml`.
 The tool must only show types without a mapping file.
 The user is able to move the list with up and down arrow keys and even type a search string to further reduce the list of elements.
 `BACKSPACE` removes the last character from the filter.
@@ -169,7 +169,7 @@ User confirms via `ENTER`.
 
 6. Create mapping file. 
 Create a yaml file in the respective path.
-`mappings/{BLOCK_TYPE}/{TERRAFORM_RESOURCE_NAME}.yml`
+`mappings/{BLOCK_TYPE}/{TERRAFORM_RESOURCE_NAME}.yaml`
 Here is an example what a YAML mapping file must look like:
 
 ```yml
@@ -221,16 +221,16 @@ terraform {
 }
 ```
 These versions are intentionally pinned, because renovate will create updates automatically.
-During creation the respective provider version is taken from `provider-versions.yml` in `~/.lppc` if it exists.
+During creation the respective provider version is taken from `provider-versions.yaml` in `~/.lppc` if it exists.
 If it doesn't exist or the `last_updated` timestamp is more than 24 hours ago the tool fetches the most recent version from:
 `https://api.github.com/repos/hashicorp/terraform-provider-{PROVIDER}/releases/latest`
 where `{PROVIDER}` is either `aws`, `time` or `random`. Example:
 `https://api.github.com/repos/hashicorp/terraform-provider-random/releases/latest`.
 The version in the JSON response of the REST API is in `tag_name`. The leading `v` must be removed if it exists.
-If the GitHub API is unreachable and a stale `provider-versions.yml` exists, fall back to the stale cached versions. Only fail if the file doesn't exist and the GitHub API isn't reachable either.
+If the GitHub API is unreachable and a stale `provider-versions.yaml` exists, fall back to the stale cached versions. Only fail if the file doesn't exist and the GitHub API isn't reachable either.
 If some API calls succeed and others fail, update the cache file partially with the successful results and keep the existing values for the failed ones.
 
-Example structure for `provider-versions.yml`:
+Example structure for `provider-versions.yaml`:
 
 ```yml
 last_updated: "2026-02-16T10:30:00Z"
@@ -385,5 +385,5 @@ If a directory from which the tool tries to read doesn't exist, the tool should 
 ## Milestone 5
 
 + Implement the generation of the mapping file and integrations test stub
-+ Dynamic provider version resolution with GitHub API and `~/.lppc/provider-versions.yml` cache
++ Dynamic provider version resolution with GitHub API and `~/.lppc/provider-versions.yaml` cache
 + See also "How it works" `6.` and `7.`

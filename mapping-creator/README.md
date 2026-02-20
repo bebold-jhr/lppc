@@ -89,7 +89,7 @@ If you deselect individual actions within a `List*`/`Describe*`/`Get*` group, th
 
 The tool creates:
 
-**Mapping file** at `mappings/{block_type}/{terraform_type}.yml`:
+**Mapping file** at `mappings/{block_type}/{terraform_type}.yaml`:
 
 ```yaml
 ---

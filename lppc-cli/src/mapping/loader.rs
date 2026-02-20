@@ -111,6 +111,7 @@ impl MappingLoader {
         // Not in cache, load from file
         let file_path = self
             .repo_path
+            .join("mappings")
             .join(provider)
             .join(block_type.as_str())
             .join(format!("{}.yaml", type_name));
@@ -217,9 +218,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "allow:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
         )
         .unwrap();
@@ -242,9 +243,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "allow:\n  - s3:CreateBucket",
         )
         .unwrap();
@@ -287,9 +288,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file for data source
-        fs::create_dir_all(temp_dir.path().join("aws/data")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/data")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/data/aws_availability_zones.yaml"),
+            temp_dir.path().join("mappings/aws/data/aws_availability_zones.yaml"),
             "allow:\n  - ec2:DescribeAvailabilityZones",
         )
         .unwrap();
@@ -307,9 +308,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file with conditional
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 allow:
   - s3:CreateBucket
@@ -336,9 +337,9 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create invalid YAML file
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "{{invalid yaml",
         )
         .unwrap();
@@ -410,10 +411,10 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create a file larger than MAX_YAML_FILE_SIZE
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         let large_content = "a".repeat(2 * 1024 * 1024); // 2 MB
         fs::write(
-            temp_dir.path().join("aws/resource/aws_large.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_large.yaml"),
             large_content,
         )
         .unwrap();

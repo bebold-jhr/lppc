@@ -140,7 +140,7 @@ impl<'a> PermissionMatcher<'a> {
                                 block_type: block.block_type,
                                 type_name: block.type_name.clone(),
                                 expected_path: format!(
-                                    "{}/{}/{}.yaml",
+                                    "mappings/{}/{}/{}.yaml",
                                     provider,
                                     block.block_type.as_str(),
                                     block.type_name
@@ -225,9 +225,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "allow:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
         )
         .unwrap();
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(result.missing_mappings[0].type_name, "aws_unknown_resource");
         assert_eq!(
             result.missing_mappings[0].expected_path,
-            "aws/resource/aws_unknown_resource.yaml"
+            "mappings/aws/resource/aws_unknown_resource.yaml"
         );
     }
 
@@ -293,9 +293,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping with conditional
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 allow:
   - s3:CreateBucket
@@ -337,9 +337,9 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping with conditional
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 allow:
   - s3:CreateBucket
@@ -379,9 +379,9 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping with nested conditional
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_route53_zone.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_route53_zone.yaml"),
             r#"
 allow:
   - route53:CreateHostedZone
@@ -425,9 +425,9 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "allow:\n  - s3:CreateBucket\n  - s3:DeleteBucket",
         )
         .unwrap();
@@ -462,14 +462,14 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping files
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "allow:\n  - s3:CreateBucket",
         )
         .unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_ec2_instance.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_ec2_instance.yaml"),
             "allow:\n  - ec2:RunInstances",
         )
         .unwrap();
@@ -517,9 +517,9 @@ conditional:
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping for data source
-        fs::create_dir_all(temp_dir.path().join("aws/data")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/data")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/data/aws_availability_zones.yaml"),
+            temp_dir.path().join("mappings/aws/data/aws_availability_zones.yaml"),
             "allow:\n  - ec2:DescribeAvailabilityZones",
         )
         .unwrap();
@@ -606,9 +606,9 @@ conditional:
     fn resolve_deny_permissions() {
         let temp_dir = TempDir::new().unwrap();
 
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 allow:
   - s3:Get*
@@ -647,9 +647,9 @@ deny:
     fn resolve_deny_only_mapping() {
         let temp_dir = TempDir::new().unwrap();
 
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 deny:
   - s3:GetObject
@@ -683,9 +683,9 @@ deny:
     fn resolve_deny_deduplication() {
         let temp_dir = TempDir::new().unwrap();
 
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 deny:
   - s3:GetObject
@@ -721,14 +721,14 @@ deny:
     fn resolve_deny_across_multiple_groups() {
         let temp_dir = TempDir::new().unwrap();
 
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             "deny:\n  - s3:GetObject",
         )
         .unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_ec2_instance.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_ec2_instance.yaml"),
             "deny:\n  - ec2:TerminateInstances",
         )
         .unwrap();
@@ -773,9 +773,9 @@ deny:
     fn resolve_conditional_does_not_add_to_deny() {
         let temp_dir = TempDir::new().unwrap();
 
-        fs::create_dir_all(temp_dir.path().join("aws/resource")).unwrap();
+        fs::create_dir_all(temp_dir.path().join("mappings/aws/resource")).unwrap();
         fs::write(
-            temp_dir.path().join("aws/resource/aws_s3_bucket.yaml"),
+            temp_dir.path().join("mappings/aws/resource/aws_s3_bucket.yaml"),
             r#"
 deny:
   - s3:GetObject
