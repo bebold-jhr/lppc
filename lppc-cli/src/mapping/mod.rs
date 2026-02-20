@@ -148,29 +148,26 @@ impl MappingRepository {
     ///
     /// This is where the YAML mapping files for AWS resources are located.
     pub fn aws_mappings_path(&self) -> PathBuf {
-        self.local_path.join("mappings").join("aws")
+        self.local_path.join("mappings")
     }
 
     /// Returns the path to a specific mapping file.
     ///
     /// # Arguments
     ///
-    /// * `provider` - The provider name (e.g., "aws")
     /// * `block_type` - The block type (e.g., "resource", "data", "ephemeral", "action")
     /// * `resource_type` - The resource type (e.g., "aws_s3_bucket")
     ///
     /// # Returns
     ///
-    /// The full path to the mapping file (e.g., `~/.lppc/user/repo/mappings/aws/resource/aws_s3_bucket.yaml`)
+    /// The full path to the mapping file (e.g., `~/.lppc/user/repo/mappings/resource/aws_s3_bucket.yaml`)
     pub fn mapping_file_path(
         &self,
-        provider: &str,
         block_type: &str,
         resource_type: &str,
     ) -> PathBuf {
         self.local_path
             .join("mappings")
-            .join(provider)
             .join(block_type)
             .join(format!("{}.yaml", resource_type))
     }
@@ -188,11 +185,11 @@ mod tests {
             was_refreshed: false,
         };
 
-        let path = repo.mapping_file_path("aws", "resource", "aws_s3_bucket");
+        let path = repo.mapping_file_path("resource", "aws_s3_bucket");
         assert_eq!(
             path,
             PathBuf::from(
-                "/home/user/.lppc/bebold-jhr/lppc-aws-test/mappings/aws/resource/aws_s3_bucket.yaml"
+                "/home/user/.lppc/bebold-jhr/lppc-aws-test/mappings/resource/aws_s3_bucket.yaml"
             )
         );
     }
@@ -208,7 +205,7 @@ mod tests {
         let path = repo.aws_mappings_path();
         assert_eq!(
             path,
-            PathBuf::from("/home/user/.lppc/bebold-jhr/lppc-aws-test/mappings/aws")
+            PathBuf::from("/home/user/.lppc/bebold-jhr/lppc-aws-test/mappings")
         );
     }
 

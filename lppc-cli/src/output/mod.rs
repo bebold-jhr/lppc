@@ -365,7 +365,7 @@ mod tests {
             missing_mappings: vec![MissingMapping {
                 block_type: BlockType::Resource,
                 type_name: "aws_unknown_resource".to_string(),
-                expected_path: "mappings/aws/resource/aws_unknown_resource.yaml".to_string(),
+                expected_path: "mappings/resource/aws_unknown_resource.yaml".to_string(),
             }],
         };
 
