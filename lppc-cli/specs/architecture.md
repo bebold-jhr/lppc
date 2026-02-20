@@ -41,7 +41,7 @@ The tool supports both **allow** and **deny** effect permissions, plus **conditi
   mapping-creator/    -- Separate tool for creating YAML mappings (not covered here)
 ```
 
-The external mapping repository (default: `https://github.com/bebold-jhr/lppc-aws-mappings`) is a separate Git repo with structure `{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml` (e.g., `aws/resource/aws_s3_bucket.yaml`).
+The external mapping repository (default: `https://github.com/bebold-jhr/lppc-aws-mappings`) is a separate Git repo with structure `mappings/{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml` (e.g., `mappings/aws/resource/aws_s3_bucket.yaml`).
 
 ---
 

@@ -60,7 +60,7 @@ pub fn filter_unmapped_types(
                 return false;
             }
 
-            let mapping_file = mapping_dir.join(format!("{}.yml", terraform_type));
+            let mapping_file = mapping_dir.join(format!("{}.yaml", terraform_type));
             let is_mapped = mapping_file.exists();
 
             if is_mapped {
@@ -123,8 +123,8 @@ mod tests {
 
         // Fully map the resource block type
         let mapping_dir = temp_dir.path().join(BlockType::Resource.mapping_dir());
-        fs::write(mapping_dir.join("aws_subnet.yml"), "# mapping").unwrap();
-        fs::write(mapping_dir.join("aws_vpc.yml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_subnet.yaml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_vpc.yaml"), "# mapping").unwrap();
 
         let result = get_available_block_types(temp_dir.path()).unwrap();
 
@@ -144,7 +144,7 @@ mod tests {
         // Map the single type in every block type
         for block_type in BlockType::ALL {
             let mapping_dir = temp_dir.path().join(block_type.mapping_dir());
-            fs::write(mapping_dir.join("aws_subnet.yml"), "# mapping").unwrap();
+            fs::write(mapping_dir.join("aws_subnet.yaml"), "# mapping").unwrap();
         }
 
         let result = get_available_block_types(temp_dir.path()).unwrap();
@@ -216,7 +216,7 @@ mod tests {
         let temp_dir = setup_test_dir();
 
         // Create a mapping file for aws_subnet
-        let mapping_file = temp_dir.path().join("mappings/resource/aws_subnet.yml");
+        let mapping_file = temp_dir.path().join("mappings/resource/aws_subnet.yaml");
         fs::write(&mapping_file, "# mapping").unwrap();
 
         let types = vec![
@@ -254,8 +254,8 @@ mod tests {
 
         // Create mapping files for all types
         let mapping_dir = temp_dir.path().join("mappings/resource");
-        fs::write(mapping_dir.join("aws_subnet.yml"), "# mapping").unwrap();
-        fs::write(mapping_dir.join("aws_vpc.yml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_subnet.yaml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_vpc.yaml"), "# mapping").unwrap();
 
         let types = vec!["aws_subnet".to_string(), "aws_vpc".to_string()];
 

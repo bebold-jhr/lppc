@@ -159,7 +159,7 @@ The project name is `lppc` which stands for `least privilege policy creator`.
     `json-grouped`: Like `json`, but each service prefix (`ec2`, `s3`,...) gets its own `statement` block.
     `hcl`: AWS policy document represented in HCL using `jsonencode()`. Permissions are in alphabetical order.
     `hcl-grouped`: Like `hcl`, but each service prefix (`ec2`, `s3`,...) gets its own `statement` block.
-+ Parameter `--mappings-url` (short `-m`) URL which overwrites the default git repo URL containing the `*.yml` files with the mappings. The default repo is `https://github.com/bebold-jhr/lppc-aws-mappings`
++ Parameter `--mappings-url` (short `-m`) URL which overwrites the default git repo URL containing the `*.yaml` files with the mappings. The default repo is `https://github.com/bebold-jhr/lppc-aws-mappings`
 + Parameter `--version` (short `-v`) showing the current release version as offered by many rust libraries for parameter parsing.
 + Parameter `--help` (short `-h`) as offered by many rust libraries for parameter parsing. This section also shows a disclaimer that manual review and adding further constraints using conditions and setting specific resources is encouraged.
 + Parameter `--verbose` showing verbose log statements making debugging possible.
@@ -257,8 +257,8 @@ The tool tracks provider mappings through nested module hierarchies, resolving m
 
 ### Mapping repository
 
-The structure of the mapping repository is as follows: `{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml`
-Example: `aws/data/aws_availability_zones.yaml`
+The structure of the mapping repository is as follows: `mappings/{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml`
+Example: `mappings/aws/data/aws_availability_zones.yaml`
 The repository is cached locally in the user's home directory. That works on every OS without having to implement different idiomatic ways.
 A refresh is triggered if the last check for updates was 24 hours ago. A shallow clone is used to minimize bandwidth.
 The cache directory is a hidden directory named `.lppc`. It contains all mapping repos preserving the structure of `username/repo-name` from the git repo. Example: `~/.lppc/bebold-jhr/lppc-aws-mappings`

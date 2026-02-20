@@ -55,7 +55,7 @@ pub struct GeneratedFiles {
 
 fn generate_mapping_file(config: &GeneratorConfig) -> Result<String> {
     let mapping_dir = config.working_dir.join(config.block_type.mapping_dir());
-    let mapping_file = mapping_dir.join(format!("{}.yml", config.terraform_type));
+    let mapping_file = mapping_dir.join(format!("{}.yaml", config.terraform_type));
 
     if mapping_file.exists() {
         bail!(
@@ -83,7 +83,7 @@ fn generate_mapping_file(config: &GeneratorConfig) -> Result<String> {
     debug!("Created mapping file: {}", mapping_file.display());
 
     let relative_path = format!(
-        "{}/{}.yml",
+        "{}/{}.yaml",
         config.block_type.mapping_dir(),
         config.terraform_type
     );
@@ -379,7 +379,7 @@ mod tests {
         let result = generate_files(&config);
         assert!(result.is_ok());
 
-        let mapping_path = temp_dir.path().join("mappings/resource/aws_subnet.yml");
+        let mapping_path = temp_dir.path().join("mappings/resource/aws_subnet.yaml");
         assert!(mapping_path.exists());
 
         let content = fs::read_to_string(&mapping_path).unwrap();
@@ -419,7 +419,7 @@ mod tests {
 
         let mapping_dir = temp_dir.path().join("mappings/resource");
         fs::create_dir_all(&mapping_dir).unwrap();
-        fs::write(mapping_dir.join("aws_subnet.yml"), "# existing").unwrap();
+        fs::write(mapping_dir.join("aws_subnet.yaml"), "# existing").unwrap();
 
         let config = GeneratorConfig {
             working_dir: temp_dir.path(),
@@ -609,7 +609,7 @@ mod tests {
 
         let result = generate_files(&config).unwrap();
 
-        assert_eq!(result.mapping_file, "mappings/data/aws_ami.yml");
+        assert_eq!(result.mapping_file, "mappings/data/aws_ami.yaml");
         assert_eq!(result.test_dir, "integration-tests/data/aws_ami");
         assert!(result.test_files.contains(&"providers.tf".to_string()));
         assert!(result.test_files.contains(&"main.tf".to_string()));
