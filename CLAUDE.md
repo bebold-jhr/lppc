@@ -29,5 +29,8 @@
 4. Implement the changes.
 5. Let a `security-reviewer` subagent check the code for flaws or vulnerabilities
 6. Always run tests before you say that you have finished
+   + For @lppc-cli unit tests: `cargo test --lib`
+   + For @lppc-cli integration tests: `cargo test --test integration -- --test-threads=1`
+   + For @mapping-creator unit tests: `cargo test`
 7. Update the @README.md or additional documentation if needed
 8. Update the relevant project's `specs/architecture.md` to reflect the changes.
