@@ -258,7 +258,7 @@ The tool tracks provider mappings through nested module hierarchies, resolving m
 ### Mapping repository
 
 The structure of the mapping repository is as follows: `mappings/{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml`
-Example: `mappings/aws/data/aws_availability_zones.yaml`
+Example: `mappings/data/aws_availability_zones.yaml`
 The repository is cached locally in the user's home directory. That works on every OS without having to implement different idiomatic ways.
 A refresh is triggered if the last check for updates was 24 hours ago. A shallow clone is used to minimize bandwidth.
 The cache directory is a hidden directory named `.lppc`. It contains all mapping repos preserving the structure of `username/repo-name` from the git repo. Example: `~/.lppc/bebold-jhr/lppc-aws-mappings`
