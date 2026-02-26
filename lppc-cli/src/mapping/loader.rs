@@ -16,6 +16,19 @@ use crate::terraform::BlockType;
 /// Maximum YAML file size (1 MB) to prevent resource exhaustion attacks.
 const MAX_YAML_FILE_SIZE: u64 = 1024 * 1024;
 
+/// Result of looking up a mapping for a Terraform type.
+///
+/// Represents the three possible outcomes:
+/// - `Found`: A `.yaml` mapping file exists with IAM permissions
+/// - `Skipped`: A `.skip` file exists, marking the type as intentionally needing no permissions
+/// - `NotFound`: Neither file exists — the type is unmapped
+#[derive(Debug, Clone)]
+pub enum MappingLookup {
+    Found(ActionMapping),
+    Skipped,
+    NotFound,
+}
+
 /// Errors that can occur during mapping loading.
 #[derive(Debug, Error)]
 pub enum LoadError {
@@ -46,10 +59,10 @@ pub struct MappingLoader {
     /// Base path to the mapping repository
     repo_path: PathBuf,
 
-    /// In-memory cache of loaded mappings
+    /// In-memory cache of mapping lookup results
     /// Key: "{provider}/{block_type}/{type_name}" e.g., "resource/aws_s3_bucket"
-    /// Value: Some(mapping) if file exists, None if not found
-    cache: Mutex<HashMap<String, Option<ActionMapping>>>,
+    /// Value: Found(mapping), Skipped, or NotFound
+    cache: Mutex<HashMap<String, MappingLookup>>,
 }
 
 impl MappingLoader {
@@ -65,8 +78,9 @@ impl MappingLoader {
         }
     }
 
-    /// Loads a mapping file for a given block.
+    /// Loads a mapping for a given block.
     ///
+    /// Checks for a `.yaml` mapping file first, then a `.skip` file.
     /// Results are cached in memory, so subsequent calls for the same block type
     /// will return the cached value without file I/O.
     ///
@@ -78,15 +92,16 @@ impl MappingLoader {
     ///
     /// # Returns
     ///
-    /// * `Ok(Some(mapping))` - Mapping file exists and was parsed successfully
-    /// * `Ok(None)` - Mapping file does not exist or has invalid name
+    /// * `Ok(MappingLookup::Found(mapping))` - YAML mapping file exists and was parsed
+    /// * `Ok(MappingLookup::Skipped)` - A `.skip` file exists (type needs no permissions)
+    /// * `Ok(MappingLookup::NotFound)` - Neither file exists or name is invalid
     /// * `Err(_)` - IO or parse error
     pub fn load(
         &self,
         provider: &str,
         block_type: BlockType,
         type_name: &str,
-    ) -> Result<Option<ActionMapping>, LoadError> {
+    ) -> Result<MappingLookup, LoadError> {
         // Validate inputs to prevent path traversal attacks
         if !is_valid_path_component(provider) || !is_valid_path_component(type_name) {
             log::warn!(
@@ -94,7 +109,7 @@ impl MappingLoader {
                 provider,
                 type_name
             );
-            return Ok(None);
+            return Ok(MappingLookup::NotFound);
         }
 
         let cache_key = format!("{}/{}/{}", provider, block_type.as_str(), type_name);
@@ -108,38 +123,47 @@ impl MappingLoader {
             }
         }
 
-        // Not in cache, load from file
-        let file_path = self
+        // Not in cache — check for .yaml file first
+        let block_type_dir = self
             .repo_path
             .join("mappings")
-            .join(block_type.as_str())
-            .join(format!("{}.yaml", type_name));
+            .join(block_type.as_str());
 
-        let mapping = if file_path.exists() {
-            log::debug!("Loading mapping from {:?}", file_path);
+        let yaml_path = block_type_dir.join(format!("{}.yaml", type_name));
+
+        let lookup = if yaml_path.exists() {
+            log::debug!("Loading mapping from {:?}", yaml_path);
 
             // Check file size before reading to prevent resource exhaustion
-            let metadata = std::fs::metadata(&file_path)?;
+            let metadata = std::fs::metadata(&yaml_path)?;
             if metadata.len() > MAX_YAML_FILE_SIZE {
-                return Err(LoadError::FileTooLarge(file_path));
+                return Err(LoadError::FileTooLarge(yaml_path));
             }
 
-            let content = std::fs::read_to_string(&file_path)?;
+            let content = std::fs::read_to_string(&yaml_path)?;
             let mapping = yaml_parser::parse_mapping(&content)
-                .map_err(|e| LoadError::Parse(file_path.clone(), e.to_string()))?;
-            Some(mapping)
+                .map_err(|e| LoadError::Parse(yaml_path.clone(), e.to_string()))?;
+            MappingLookup::Found(mapping)
         } else {
-            log::debug!("No mapping file found for {}", cache_key);
-            None
+            // No .yaml file — check for .skip file
+            let skip_path = block_type_dir.join(format!("{}.skip", type_name));
+
+            if skip_path.exists() {
+                log::debug!("Skip file found for {}", cache_key);
+                MappingLookup::Skipped
+            } else {
+                log::debug!("No mapping file found for {}", cache_key);
+                MappingLookup::NotFound
+            }
         };
 
         // Store in cache
         {
             let mut cache = self.cache.lock().unwrap();
-            cache.insert(cache_key, mapping.clone());
+            cache.insert(cache_key, lookup.clone());
         }
 
-        Ok(mapping)
+        Ok(lookup)
     }
 
     /// Extracts the provider name from a type name.
@@ -202,14 +226,14 @@ mod tests {
     }
 
     #[test]
-    fn loader_returns_none_for_missing_file() {
+    fn loader_returns_not_found_for_missing_file() {
         let temp_dir = TempDir::new().unwrap();
         let loader = MappingLoader::new(temp_dir.path().to_path_buf());
 
         let result = loader
             .load("aws", BlockType::Resource, "aws_nonexistent")
             .unwrap();
-        assert!(result.is_none());
+        assert!(matches!(result, MappingLookup::NotFound));
     }
 
     #[test]
@@ -229,16 +253,19 @@ mod tests {
         let result = loader
             .load("aws", BlockType::Resource, "aws_s3_bucket")
             .unwrap();
-        assert!(result.is_some());
 
-        let mapping = result.unwrap();
-        assert_eq!(mapping.allow.len(), 2);
-        assert!(mapping.allow.contains(&"s3:CreateBucket".to_string()));
-        assert!(mapping.allow.contains(&"s3:DeleteBucket".to_string()));
+        match result {
+            MappingLookup::Found(mapping) => {
+                assert_eq!(mapping.allow.len(), 2);
+                assert!(mapping.allow.contains(&"s3:CreateBucket".to_string()));
+                assert!(mapping.allow.contains(&"s3:DeleteBucket".to_string()));
+            }
+            _ => panic!("Expected MappingLookup::Found"),
+        }
     }
 
     #[test]
-    fn loader_caches_mappings() {
+    fn loader_caches_found_mappings() {
         let temp_dir = TempDir::new().unwrap();
 
         // Create mapping file
@@ -259,18 +286,21 @@ mod tests {
             .load("aws", BlockType::Resource, "aws_s3_bucket")
             .unwrap();
 
-        // Both should return Some with same data
-        assert!(first.is_some());
-        assert!(second.is_some());
-        assert_eq!(first.unwrap().allow, second.unwrap().allow);
+        // Both should be Found with same data
+        match (first, second) {
+            (MappingLookup::Found(a), MappingLookup::Found(b)) => {
+                assert_eq!(a.allow, b.allow);
+            }
+            _ => panic!("Expected both to be MappingLookup::Found"),
+        }
     }
 
     #[test]
-    fn loader_caches_missing_files() {
+    fn loader_caches_not_found() {
         let temp_dir = TempDir::new().unwrap();
         let loader = MappingLoader::new(temp_dir.path().to_path_buf());
 
-        // Load twice - both should be None
+        // Load twice - both should be NotFound
         let first = loader
             .load("aws", BlockType::Resource, "aws_nonexistent")
             .unwrap();
@@ -278,8 +308,8 @@ mod tests {
             .load("aws", BlockType::Resource, "aws_nonexistent")
             .unwrap();
 
-        assert!(first.is_none());
-        assert!(second.is_none());
+        assert!(matches!(first, MappingLookup::NotFound));
+        assert!(matches!(second, MappingLookup::NotFound));
     }
 
     #[test]
@@ -299,7 +329,7 @@ mod tests {
         let result = loader
             .load("aws", BlockType::Data, "aws_availability_zones")
             .unwrap();
-        assert!(result.is_some());
+        assert!(matches!(result, MappingLookup::Found(_)));
     }
 
     #[test]
@@ -325,10 +355,13 @@ conditional:
         let result = loader
             .load("aws", BlockType::Resource, "aws_s3_bucket")
             .unwrap();
-        assert!(result.is_some());
 
-        let mapping = result.unwrap();
-        assert!(!mapping.conditional.is_none());
+        match result {
+            MappingLookup::Found(mapping) => {
+                assert!(!mapping.conditional.is_none());
+            }
+            _ => panic!("Expected MappingLookup::Found"),
+        }
     }
 
     #[test]
@@ -379,7 +412,7 @@ conditional:
         let result = loader
             .load("../etc", BlockType::Resource, "passwd")
             .unwrap();
-        assert!(result.is_none());
+        assert!(matches!(result, MappingLookup::NotFound));
     }
 
     #[test]
@@ -391,7 +424,7 @@ conditional:
         let result = loader
             .load("aws", BlockType::Resource, "../../etc/passwd")
             .unwrap();
-        assert!(result.is_none());
+        assert!(matches!(result, MappingLookup::NotFound));
     }
 
     #[test]
@@ -402,7 +435,7 @@ conditional:
         let result = loader
             .load(".hidden", BlockType::Resource, "aws_s3_bucket")
             .unwrap();
-        assert!(result.is_none());
+        assert!(matches!(result, MappingLookup::NotFound));
     }
 
     #[test]
@@ -422,5 +455,91 @@ conditional:
 
         let result = loader.load("aws", BlockType::Resource, "aws_large");
         assert!(matches!(result, Err(LoadError::FileTooLarge(_))));
+    }
+
+    // --- Skip file tests ---
+
+    #[test]
+    fn loader_returns_skipped_for_skip_file() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a .skip file (no .yaml)
+        fs::create_dir_all(temp_dir.path().join("mappings/data")).unwrap();
+        fs::write(
+            temp_dir.path().join("mappings/data/aws_arn.skip"),
+            "",
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+
+        let result = loader
+            .load("aws", BlockType::Data, "aws_arn")
+            .unwrap();
+        assert!(matches!(result, MappingLookup::Skipped));
+    }
+
+    #[test]
+    fn loader_caches_skipped_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("mappings/data")).unwrap();
+        fs::write(
+            temp_dir.path().join("mappings/data/aws_arn.skip"),
+            "",
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+
+        let first = loader.load("aws", BlockType::Data, "aws_arn").unwrap();
+        let second = loader.load("aws", BlockType::Data, "aws_arn").unwrap();
+
+        assert!(matches!(first, MappingLookup::Skipped));
+        assert!(matches!(second, MappingLookup::Skipped));
+    }
+
+    #[test]
+    fn loader_yaml_takes_priority_over_skip() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create both .yaml and .skip files — .yaml should win
+        fs::create_dir_all(temp_dir.path().join("mappings/resource")).unwrap();
+        fs::write(
+            temp_dir.path().join("mappings/resource/aws_s3_bucket.yaml"),
+            "allow:\n  - s3:CreateBucket",
+        )
+        .unwrap();
+        fs::write(
+            temp_dir.path().join("mappings/resource/aws_s3_bucket.skip"),
+            "",
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+
+        let result = loader
+            .load("aws", BlockType::Resource, "aws_s3_bucket")
+            .unwrap();
+
+        match result {
+            MappingLookup::Found(mapping) => {
+                assert!(mapping.allow.contains(&"s3:CreateBucket".to_string()));
+            }
+            _ => panic!("Expected MappingLookup::Found (yaml should take priority over skip)"),
+        }
+    }
+
+    #[test]
+    fn loader_rejects_path_traversal_in_skip_file() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Even if a .skip file existed at a traversal path, the validator should reject it
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+
+        let result = loader
+            .load("aws", BlockType::Data, "../etc/passwd")
+            .unwrap();
+        assert!(matches!(result, MappingLookup::NotFound));
     }
 }

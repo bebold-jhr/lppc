@@ -57,6 +57,7 @@ lppc-aws-mappings/
   mappings/
     resource/
       {terraform_type}.yaml             -- Generated mapping files
+      {terraform_type}.skip             -- Skip marker (reason as plain text)
     data/
     ephemeral/
     action/
@@ -200,7 +201,15 @@ ProviderVersionCache (internal to provider_versions.rs)
   +-- providers: ProviderVersions   -- Cached version strings
 ```
 
-### 4.6 UI Components (internal to ui.rs)
+### 4.6 Service Prefix Selection
+
+```
+ServicePrefixSelection (enum)
+  +-- Service(ServiceReference)  -- User selected an AWS service prefix
+  +-- Skip                       -- User chose to skip this terraform type
+```
+
+### 4.7 UI Components (internal to ui.rs)
 
 ```
 TerminalGuard                       -- RAII guard for raw mode + alternate screen
@@ -236,15 +245,15 @@ main()
        1. Args::parse()                             -- clap parses CLI arguments
        2. init_logging(verbose)                      -- env_logger: debug or warn level
        3. validate_working_directory(path)            -- resolve, canonicalize, verify is dir
-       4. get_available_block_types(working_dir)         -- Check each block type for unmapped types
-            -> Vec<BlockType> (only block types with unmapped terraform types)
+       4. get_available_block_types(working_dir)         -- Check each block type for unhandled types
+            -> Vec<BlockType> (only block types with unhandled terraform types)
             -> If empty, print message and return Ok(())
        5. select_block_type(available_block_types)       -- TUI: SingleSelector, non-filterable
             -> BlockType
        6. load_terraform_types(working_dir, block_type)
             -> Read schema JSON, deserialize to Vec<String>
        7. filter_unmapped_types(working_dir, block_type, types)
-            -> Remove types that have existing .yaml in mapping dir
+            -> Remove types that have existing .yaml or .skip in mapping dir
             -> Validate type names (path traversal check)
             -> If empty, print message and return Ok(())
        8. select_terraform_type(unmapped_types)      -- TUI: SingleSelector, filterable
@@ -260,7 +269,13 @@ main()
             -> Option<&ServiceReference>
       12. select_service_prefix(services, preselected_index)
             -> TUI: SingleSelector, filterable, with pre-positioned cursor
-            -> ServiceReference
+            -> Prepends "<<skip>>" option to the list
+            -> ServicePrefixSelection (Service or Skip)
+      12a. IF Skip:
+            -> prompt_skip_reason()    -- TUI: text input for reason
+            -> create_skip_file(working_dir, block_type, terraform_type, reason)
+               -> Writes reason to mappings/{block_type}/{terraform_type}.skip
+            -> Print "Skipped type: {terraform_type}" and return Ok(())
       13. load_service_actions(working_dir, service_prefix)
             -> Read sources/aws/{service}.json
             -> ServiceActions
@@ -387,13 +402,13 @@ The resolution logic accepts a fetcher function parameter (`impl Fn(&str) -> Res
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/main.rs` | ~215 | Entry point. Module declarations. `run()` orchestrates the full wizard pipeline including provider version resolution. `init_logging()` configures env_logger. `validate_working_directory()` resolves and canonicalizes the path. Unit tests for path validation. |
+| `src/main.rs` | ~245 | Entry point. Module declarations. `run()` orchestrates the full wizard pipeline including provider version resolution and skip flow. `create_skip_file()` writes a `.skip` marker file with the user-provided reason. `init_logging()` configures env_logger. `validate_working_directory()` resolves and canonicalizes the path. Unit tests for path validation. |
 | `src/cli.rs` | ~21 | `Args` struct with clap derive macros. Positional `working_dir: PathBuf` and optional `--verbose` flag. Includes disclaimer in help text. |
 | `src/block_type.rs` | ~146 | `BlockType` enum with four variants. `ALL` constant. Path methods for schema files, mapping directories, integration test directories, and Terraform documentation URLs. `Display` impl. Comprehensive unit tests. |
-| `src/schema.rs` | ~290 | `get_available_block_types()` checks each block type for unmapped terraform types and returns only those with work remaining. `load_terraform_types()` reads and parses schema JSON files. `filter_unmapped_types()` removes types that have existing `.yaml` mapping files. `is_valid_type_name()` validates against path traversal. Unit tests including security edge cases. |
+| `src/schema.rs` | ~340 | `get_available_block_types()` checks each block type for unmapped terraform types and returns only those with work remaining. `load_terraform_types()` reads and parses schema JSON files. `filter_unmapped_types()` removes types that have existing `.yaml` mapping files or `.skip` marker files. `is_valid_type_name()` validates against path traversal. Unit tests including security edge cases and skip file handling. |
 | `src/service.rs` | ~199 | `ServiceReference` serde type. `load_service_references()` reads the AWS service index JSON. `extract_service_hint()` derives a service prefix guess from a terraform type name. `find_best_match()` performs exact-match lookup. Unit tests cover parsing, hint extraction, and matching. |
 | `src/action.rs` | ~510 | `Action`, `ActionProperties`, `ActionAnnotations`, `ServiceActions` serde types. `SelectedActions` and `ComputedActions` structs for three-state selection. `load_service_actions()` reads per-service JSON with path traversal check. `get_preselected_indices()` identifies tagging/read actions. `compute_selected_actions()` applies deny-aware wildcard consolidation logic with disjointness assertion. Extensive unit tests including deny-specific scenarios. |
-| `src/ui.rs` | ~920 | **The largest file.** `TerminalGuard` RAII type. `SingleSelector` struct with filter, navigation, and rendering. `ActionSelector` struct with three-state selection (allow/deny/deselected), `cycle_current()` for SPACEBAR cycling, three-state `toggle_all()`, and split-pane rendering with separate Allow/Deny sections. Public functions: `select_block_type(available_block_types)` (accepts pre-filtered block types), `select_terraform_type()`, `select_service_prefix()`, `select_actions()` (returns `SelectedActions`). Left pane uses `[✓]` green / `[✗]` red / `[ ]` indicators. Unit tests for filter, selection preservation, cycling, toggle logic, and navigation. |
+| `src/ui.rs` | ~1010 | **The largest file.** `TerminalGuard` RAII type. `SingleSelector` struct with filter, navigation, and rendering. `ActionSelector` struct with three-state selection (allow/deny/deselected), `cycle_current()` for SPACEBAR cycling, three-state `toggle_all()`, and split-pane rendering with separate Allow/Deny sections. `ServicePrefixSelection` enum (Service/Skip). Public functions: `select_block_type(available_block_types)` (accepts pre-filtered block types), `select_terraform_type()`, `select_service_prefix()` (returns `ServicePrefixSelection`, prepends `<<skip>>` option), `prompt_skip_reason()` (text input TUI for skip reason), `select_actions()` (returns `SelectedActions`). Left pane uses `[✓]` green / `[✗]` red / `[ ]` indicators. Unit tests for filter, selection preservation, cycling, toggle logic, and navigation. |
 | `src/generator.rs` | ~760 | `GeneratorConfig` struct with `allow_actions`, `deny_actions`, and `provider_versions`. `generate_files()` orchestrates mapping file and test stub creation. `generate_mapping_yaml()` outputs separate `deny:` and `allow:` YAML sections (deny before allow, omitting empty sections). `generate_integration_tests()` creates directory structure with four files. `generate_providers_tf()` produces dynamic HCL from `ProviderVersions`. URL generation helpers. `print_success_message()` outputs tree-formatted success output. `is_valid_terraform_type()` path traversal guard. `TestFiles` internal struct. Extensive unit tests including deny-section and dynamic-version scenarios. |
 | `src/provider_versions.rs` | ~330 | `ProviderVersions` struct (public) and `ProviderVersionCache` (internal). `resolve_provider_versions()` entry point orchestrates cache check, GitHub API fetch, and cache write. `load_cache()`/`save_cache()` handle YAML serialization via `serde-saphyr`. `fetch_latest_version()` makes HTTPS GET to GitHub API with `ureq` (10s timeout, custom User-Agent). `is_cache_fresh()` checks 24h expiry. `is_valid_version_string()` validates digits-and-dots. `strip_version_prefix()` removes leading `v`. Testable via `resolve_with_cache_and_fetcher()` which accepts a mock fetcher function. Extensive unit tests covering cache roundtrips, freshness, partial failures, and fallback logic. |
 

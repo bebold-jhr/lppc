@@ -27,8 +27,10 @@ Block type to schema file mapping:
 | action     | sources/terraform/action_schemas.json             |
 
 Each JSON file solely contains an array with type names like `aws_subnet`.
-These must be compared to the existence of mapping paths. Example: `mappings/resource/aws_subnet.yaml`.
-The tool must only show types without a mapping file.
+These must be compared to the existence of mapping paths. 
+    + `mappings/resource/aws_subnet.yaml` for a type which actually offers a mapping
+    + `mappings/data/aws_arn.skip` for a type which doesn't get a mapping.
+The tool must only show types without a mapping file (`*.yml`) or a skipping file (`*.skip`).
 The user is able to move the list with up and down arrow keys and even type a search string to further reduce the list of elements.
 `BACKSPACE` removes the last character from the filter.
 Selection via `ENTER`.
@@ -57,8 +59,14 @@ The JSON looks like this:
 ]
 ```
 
+A static value is added to the list: `<<skip>>`. This entry is always at the top of the list, followed by the rest sorted
+in alphabetical order. Choosing this value will ask the user to fill out the reason.
+After confirming with `ENTER`, a file is created under the path `mappings/{BLOCK_TYPE}/{TYPE}.skip` which
+contains the reason the user stated as plain text. The program exits with status code `0` after that.
+
 The tool should pre-select the best matching or none if it's not able to. The user has to make the final decision.
 The heuristic for finding the best match is removing the `aws_` prefix and then using the remaining substring up to the next underscore `_`. Example: `aws_iam_role` => `iam`. `aws_subnet` wouldn't find anything and therefore select nothing so the user has to make the decision on its own.
+
 The user is able to move the list with up and down arrow keys and even type a search string to further reduce the list of elements. In comparison to the terraform type selection, the user has to select one (exactly one) entry which is then highlighted (e.g. checkbox symbol with a check mark) using `SPACEBAR`.
 Only if one entry is selected the user can confirm the choice using `ENTER`.
 

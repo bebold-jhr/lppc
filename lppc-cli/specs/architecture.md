@@ -41,7 +41,7 @@ The tool supports both **allow** and **deny** effect permissions, plus **conditi
   mapping-creator/    -- Separate tool for creating YAML mappings (not covered here)
 ```
 
-The external mapping repository (default: `https://github.com/bebold-jhr/lppc-aws-mappings`) is a separate Git repo with structure `mappings/{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml` (e.g., `mappings/resource/aws_s3_bucket.yaml`).
+The external mapping repository (default: `https://github.com/bebold-jhr/lppc-aws-mappings`) is a separate Git repo with structure `mappings/{BLOCK_TYPE}/{TYPE}.[yaml|skip]` (e.g., `mappings/resource/aws_s3_bucket.yaml` or `mappings/data/aws_arn.skip`). A `.skip` file marks a type as intentionally needing no IAM permissions.
 
 ---
 
@@ -177,10 +177,15 @@ ConditionalActions               // recursive enum
   +-- Nested(HashMap<String, ConditionalActions>)
   +-- resolve(present_paths) -> Vec<String>              // resolves based on attribute presence
 
+MappingLookup                    // result of looking up a mapping for a Terraform type
+  +-- Found(ActionMapping)       // .yaml file exists with IAM permissions
+  +-- Skipped                    // .skip file exists (type needs no permissions)
+  +-- NotFound                   // neither file exists — type is unmapped
+
 MappingLoader
   +-- repo_path: PathBuf
-  +-- cache: Mutex<HashMap<String, Option<ActionMapping>>>   // in-memory cache
-  +-- load(provider, block_type, type_name) -> Option<ActionMapping>
+  +-- cache: Mutex<HashMap<String, MappingLookup>>           // in-memory cache
+  +-- load(provider, block_type, type_name) -> MappingLookup // checks .yaml then .skip
   +-- extract_provider(type_name) -> Option<&str>            // "aws_s3_bucket" -> "aws"
 
 PermissionMatcher
@@ -252,11 +257,10 @@ main()
   7. MappingLoader::new(repo_path)
   8. PermissionMatcher::resolve(config)
        -> For each block in each provider group:
-          - Load YAML mapping (with in-memory cache)
-          - Add allow actions to group's allow set
-          - Add deny actions to group's deny set
-          - Resolve conditional actions (attribute presence) -> allow set
-          - Track missing mappings
+          - Load mapping (with in-memory cache): checks .yaml then .skip
+          - Found: add allow/deny actions, resolve conditional actions
+          - Skipped: log debug, no permissions added, no warning
+          - NotFound: track as missing mapping
        -> Return PermissionResult
   9. OutputWriter::write_missing_mappings() // warnings to stderr
  10. OutputWriter::write()                  // formatted output to stdout or files
@@ -305,7 +309,7 @@ The `OutputFormatter` trait with `JsonFormatter` and `HclFormatter` implementati
 `MappingRepository` encapsulates the lifecycle of the external data source (clone, cache, update, offline fallback). `CacheManager` handles persistence concerns separately.
 
 ### In-Memory Cache (MappingLoader)
-`MappingLoader` uses a `Mutex<HashMap<String, Option<ActionMapping>>>` to cache loaded YAML files, avoiding repeated I/O for the same resource type across multiple blocks. Caches both hits and misses.
+`MappingLoader` uses a `Mutex<HashMap<String, MappingLookup>>` to cache mapping lookup results, avoiding repeated I/O for the same resource type across multiple blocks. Caches all three states: `Found` (YAML mapping loaded), `Skipped` (.skip file exists), and `NotFound` (neither file exists).
 
 ### Recursive Descent (ConditionalActions)
 The `ConditionalActions` enum is a recursive data structure (`Nested` variant contains `HashMap<String, ConditionalActions>`) that supports arbitrary nesting depth. Resolution traverses the tree matching against `present_attributes` paths.
@@ -381,7 +385,7 @@ These are documented extensively in `specs/brainstorming.md`. Key points for a r
 | `mod.rs` | ~217 | `MappingRepository::ensure_available()`: main lifecycle method. Decides whether to clone, update, or use cache based on `force_refresh`, cache age (24h), and network availability. `MappingError` enum. Helper methods: `aws_mappings_path()`, `mapping_file_path()`. |
 | `cache.rs` | ~502 | `CacheManager`: manages `~/.lppc` directory. URL parsing for HTTPS and SSH git URLs. Timestamp-based cache expiry using SHA-256 hashed URL filenames. Path traversal validation (`validate_path_component`). Extensive security tests. |
 | `repository.rs` | ~402 | `GitOperations`: stateless struct with static methods. `shallow_clone()` and `update()` shell out to system `git`. URL validation (rejects `ext::`, `file://`, dash-prefix). Branch name validation. `classify_error()` maps git error messages to `GitError` variants (notably `NetworkUnreachable` for graceful degradation). |
-| `loader.rs` | ~427 | `MappingLoader`: loads YAML mapping files from disk with in-memory Mutex-based cache. Path traversal prevention via `is_valid_path_component()`. File size limit: 1 MB. `extract_provider()` splits type_name on `_` to get provider prefix. |
+| `loader.rs` | ~550 | `MappingLoader`: loads mapping files from disk with in-memory Mutex-based cache. Returns `MappingLookup` enum (Found/Skipped/NotFound). Checks `.yaml` first, then `.skip` files. Path traversal prevention via `is_valid_path_component()`. File size limit: 1 MB. `extract_provider()` splits type_name on `_` to get provider prefix. |
 | `schema.rs` | ~335 | `ActionMapping`: `allow: Vec<String>`, `deny: Vec<String>`, `conditional: ConditionalActions`. `ConditionalActions` is a recursive enum (None, Actions, Nested) with `resolve()` that walks attribute paths. |
 | `yaml_parser.rs` | ~433 | `parse_mapping()`: parses YAML string into `ActionMapping` using `saphyr`. Handles `allow`, `deny`, and recursive `conditional` sections. `parse_conditional_actions()` recursively converts YAML nodes into `ConditionalActions`. |
 | `matcher.rs` | ~817 | `PermissionMatcher::resolve()`: iterates provider groups and blocks, loads mappings, collects allow/deny/conditional permissions into `GroupPermissions`. Deduplicates via `HashSet`. Tracks missing mappings once per `(BlockType, type_name)` pair. |

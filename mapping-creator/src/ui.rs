@@ -274,16 +274,89 @@ pub fn select_terraform_type(types: Vec<String>) -> Result<String> {
     Ok(types[selected_index].clone())
 }
 
+pub enum ServicePrefixSelection {
+    Service(ServiceReference),
+    Skip,
+}
+
 pub fn select_service_prefix(
     services: Vec<ServiceReference>,
     preselected_index: Option<usize>,
-) -> Result<ServiceReference> {
-    let service_names: Vec<String> = services.iter().map(|s| s.service.clone()).collect();
-    let initial_position = preselected_index.unwrap_or(0);
+) -> Result<ServicePrefixSelection> {
+    let mut service_names: Vec<String> = vec!["<<skip>>".to_string()];
+    service_names.extend(services.iter().map(|s| s.service.clone()));
+    let initial_position = preselected_index.map(|i| i + 1).unwrap_or(1);
     let selected_index =
         run_single_selector(service_names, "Select a service prefix", initial_position, true)?;
 
-    Ok(services[selected_index].clone())
+    if selected_index == 0 {
+        Ok(ServicePrefixSelection::Skip)
+    } else {
+        Ok(ServicePrefixSelection::Service(
+            services[selected_index - 1].clone(),
+        ))
+    }
+}
+
+pub fn prompt_skip_reason() -> Result<String> {
+    let _guard = TerminalGuard::new()?;
+    let mut terminal = create_terminal()?;
+    let mut input_text = String::new();
+
+    loop {
+        terminal
+            .draw(|frame| render_skip_reason_input(frame, &input_text))
+            .context("Failed to draw UI")?;
+
+        if let Event::Key(key) = event::read().context("Failed to read event")? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+
+            match key.code {
+                KeyCode::Enter => {
+                    let trimmed = input_text.trim().to_string();
+                    if trimmed.is_empty() {
+                        bail!("Skip reason cannot be empty");
+                    }
+                    return Ok(trimmed);
+                }
+                KeyCode::Esc => {
+                    bail!("Skip reason entry cancelled by user");
+                }
+                KeyCode::Backspace => {
+                    input_text.pop();
+                }
+                KeyCode::Char(c) => {
+                    input_text.push(c);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn render_skip_reason_input(frame: &mut Frame, input_text: &str) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(1)])
+        .split(frame.area());
+
+    let display_text = format!("{}█", input_text);
+    let input_paragraph = Paragraph::new(display_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Enter reason for skipping "),
+    );
+    frame.render_widget(input_paragraph, chunks[0]);
+
+    let controls = Line::from(vec![
+        Span::styled("[ENTER]", Style::default().fg(Color::Green)),
+        Span::raw(" Confirm  "),
+        Span::styled("[ESC]", Style::default().fg(Color::Red)),
+        Span::raw(" Cancel"),
+    ]);
+    frame.render_widget(Paragraph::new(controls), chunks[1]);
 }
 
 // ============================================================================

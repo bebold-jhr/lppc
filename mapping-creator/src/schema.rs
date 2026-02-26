@@ -61,13 +61,16 @@ pub fn filter_unmapped_types(
             }
 
             let mapping_file = mapping_dir.join(format!("{}.yaml", terraform_type));
-            let is_mapped = mapping_file.exists();
+            let skip_file = mapping_dir.join(format!("{}.skip", terraform_type));
+            let is_handled = mapping_file.exists() || skip_file.exists();
 
-            if is_mapped {
+            if mapping_file.exists() {
                 debug!("Filtering out mapped type: {}", terraform_type);
+            } else if skip_file.exists() {
+                debug!("Filtering out skipped type: {}", terraform_type);
             }
 
-            !is_mapped
+            !is_handled
         })
         .collect()
 }
@@ -300,5 +303,62 @@ mod tests {
         assert!(filtered.contains(&"aws_subnet".to_string()));
         assert!(!filtered.contains(&"../../../etc/passwd".to_string()));
         assert!(!filtered.contains(&"foo/bar".to_string()));
+    }
+
+    #[test]
+    fn filter_unmapped_types_excludes_types_with_skip_files() {
+        let temp_dir = setup_test_dir();
+
+        let mapping_dir = temp_dir.path().join(BlockType::Resource.mapping_dir());
+        fs::write(mapping_dir.join("aws_subnet.skip"), "No AWS API interaction").unwrap();
+
+        let types = vec![
+            "aws_subnet".to_string(),
+            "aws_vpc".to_string(),
+            "aws_iam_role".to_string(),
+        ];
+
+        let filtered = filter_unmapped_types(temp_dir.path(), BlockType::Resource, types);
+
+        assert_eq!(filtered.len(), 2);
+        assert!(!filtered.contains(&"aws_subnet".to_string()));
+        assert!(filtered.contains(&"aws_vpc".to_string()));
+        assert!(filtered.contains(&"aws_iam_role".to_string()));
+    }
+
+    #[test]
+    fn filter_unmapped_types_excludes_types_with_both_yaml_and_skip() {
+        let temp_dir = setup_test_dir();
+
+        let mapping_dir = temp_dir.path().join(BlockType::Resource.mapping_dir());
+        fs::write(mapping_dir.join("aws_subnet.yaml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_subnet.skip"), "No AWS API interaction").unwrap();
+
+        let types = vec!["aws_subnet".to_string(), "aws_vpc".to_string()];
+
+        let filtered = filter_unmapped_types(temp_dir.path(), BlockType::Resource, types);
+
+        assert_eq!(filtered.len(), 1);
+        assert!(!filtered.contains(&"aws_subnet".to_string()));
+        assert!(filtered.contains(&"aws_vpc".to_string()));
+    }
+
+    #[test]
+    fn get_available_block_types_excludes_fully_handled_block_type() {
+        let temp_dir = setup_test_dir();
+        write_all_schema_files(&temp_dir, &["aws_subnet", "aws_vpc"]);
+
+        // Handle the resource block type: one mapped, one skipped
+        let mapping_dir = temp_dir.path().join(BlockType::Resource.mapping_dir());
+        fs::write(mapping_dir.join("aws_subnet.yaml"), "# mapping").unwrap();
+        fs::write(mapping_dir.join("aws_vpc.skip"), "No AWS API interaction").unwrap();
+
+        let result = get_available_block_types(temp_dir.path()).unwrap();
+
+        assert_eq!(result.len(), 3);
+        assert!(!result.contains(&BlockType::Resource));
+        assert!(result.contains(&BlockType::Action));
+        assert!(result.contains(&BlockType::Data));
+        assert!(result.contains(&BlockType::Ephemeral));
     }
 }
