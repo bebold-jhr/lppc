@@ -153,7 +153,7 @@ The project name is `lppc` which stands for `least privilege policy creator`.
 + Use colors and formatting to make an appealing and easy to read CLI application
 + Parameter `--working-dir` (short `-d`) Can take an absolute path or a relative path to change the directory from the default (see section "Working directory").
 + Parameter `--no-color` (short `-n`) Suppress the usage of colors for better readability in environments like CICD pipeline runners.
-+ Parameter `--output-dir` (short `-o`) Define an absolute path or a relative path to an output directory. If the parameter has not been set, the output will be shown directly on stdout. When set, one file per role is created in the specified directory with the naming pattern `{OUTPUT_NAME}.{EXTENSION}` (e.g., `NetworkDeployer.json`). The extension is determined by the output format: `.json` for json/json-grouped, `.hcl` for hcl/hcl-grouped. If the directory does not exist, it will be created automatically. The info regarding missing mappings is solely shown on stderr.
++ Parameter `--output-dir` (short `-o`) Define an absolute path or a relative path to an output directory. If the parameter has not been set, the output will be shown directly on stdout. When set, one file per role is created in the specified directory with the naming pattern `{OUTPUT_NAME}.{EXTENSION}` (e.g., `NetworkDeployer.json`). The extension is determined by the output format: `.json` for json/json-grouped, `.hcl` for hcl/hcl-grouped. If the directory does not exist, it will be created automatically.
 + Parameter `--output-format` (short `-f`) Defines the format of the output. Default is `hcl-grouped`. The following are supported:
     `json`: JSON format of an AWS policy document. Permissions are listed in alphabetical order.
     `json-grouped`: Like `json`, but each service prefix (`ec2`, `s3`,...) gets its own `statement` block.
@@ -257,8 +257,8 @@ The tool tracks provider mappings through nested module hierarchies, resolving m
 
 ### Mapping repository
 
-The structure of the mapping repository is as follows: `mappings/{PROVIDER}/{BLOCK_TYPE}/{TYPE}.yaml`
-Example: `mappings/data/aws_availability_zones.yaml`
+The structure of the mapping repository is as follows: `mappings/{PROVIDER}/{BLOCK_TYPE}/{TYPE}.[yaml|skip]`
+Example: `mappings/data/aws_availability_zones.yaml`, `mappings/data/aws_arn.skip`
 The repository is cached locally in the user's home directory. That works on every OS without having to implement different idiomatic ways.
 A refresh is triggered if the last check for updates was 24 hours ago. A shallow clone is used to minimize bandwidth.
 The cache directory is a hidden directory named `.lppc`. It contains all mapping repos preserving the structure of `username/repo-name` from the git repo. Example: `~/.lppc/bebold-jhr/lppc-aws-mappings`
@@ -297,6 +297,20 @@ Permissions are grouped by the provider's `role_arn` expression string (exact ma
 ## Output
 
 The list of permissions is a distinct list. For example `ec2:CreateSubnet` can only occur once per provider even if multiple mappings add this to the list of permissions.
+
+### Missing mappings
+
+The tool writes a list of all the types which neither have a mapping nor a skip file to stderr.
+Types which don't have a `*.yaml` file, but a `*.skip` file are not listed here.
+Example:
+
+```
+Warning: No mapping files found for the following resources:
+  - resource.aws_cloudwatch_event_rule (expected: mappings/resource/aws_cloudwatch_event_rule.yaml)
+  - resource.aws_rolesanywhere_profile (expected: mappings/resource/aws_rolesanywhere_profile.yaml)
+  - resource.aws_ssoadmin_managed_policy_attachment (expected: mappings/resource/aws_ssoadmin_managed_policy_attachment.yaml)
+These resources may require manual permission review.
+```
 
 ### Output Naming Convention
 

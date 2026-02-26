@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-use super::loader::{LoadError, MappingLoader};
+use super::loader::{LoadError, MappingLoader, MappingLookup};
 use crate::terraform::{BlockType, TerraformConfig};
 
 /// Permissions for a single provider group, separating allow and deny.
@@ -102,7 +102,7 @@ impl<'a> PermissionMatcher<'a> {
                     .loader
                     .load(provider, block.block_type, &block.type_name)?
                 {
-                    Some(mapping) => {
+                    MappingLookup::Found(mapping) => {
                         // Add allow actions
                         let allow_count = mapping.allow.len();
                         for action in &mapping.allow {
@@ -132,7 +132,14 @@ impl<'a> PermissionMatcher<'a> {
                             block.type_name
                         );
                     }
-                    None => {
+                    MappingLookup::Skipped => {
+                        log::debug!(
+                            "Skipping {}.{} (marked as needing no permissions)",
+                            block.block_type.as_str(),
+                            block.type_name
+                        );
+                    }
+                    MappingLookup::NotFound => {
                         // Track missing mapping (once per type)
                         if !seen_types.contains(&type_key) {
                             seen_types.insert(type_key);
@@ -811,5 +818,73 @@ conditional:
         assert!(!group_perms.deny.contains("s3:PutBucketTagging"));
         // Original deny stays in deny
         assert!(group_perms.deny.contains("s3:GetObject"));
+    }
+
+    // --- Skip type tests ---
+
+    #[test]
+    fn resolve_skipped_type_not_in_missing_mappings() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a .skip file for aws_arn
+        fs::create_dir_all(temp_dir.path().join("mappings/data")).unwrap();
+        fs::write(
+            temp_dir.path().join("mappings/data/aws_arn.skip"),
+            "",
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        let block = create_test_block(BlockType::Data, "aws_arn", HashSet::new());
+        let mut groups = HashMap::new();
+        groups.insert(
+            "TestDeployer".to_string(),
+            ProviderGroup {
+                output_name: "TestDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Test".to_string()),
+                blocks: vec![block],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        // Skipped type should NOT appear in missing_mappings
+        assert!(result.missing_mappings.is_empty());
+    }
+
+    #[test]
+    fn resolve_skipped_type_adds_no_permissions() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a .skip file for aws_arn
+        fs::create_dir_all(temp_dir.path().join("mappings/data")).unwrap();
+        fs::write(
+            temp_dir.path().join("mappings/data/aws_arn.skip"),
+            "",
+        )
+        .unwrap();
+
+        let loader = MappingLoader::new(temp_dir.path().to_path_buf());
+        let matcher = PermissionMatcher::new(&loader);
+
+        let block = create_test_block(BlockType::Data, "aws_arn", HashSet::new());
+        let mut groups = HashMap::new();
+        groups.insert(
+            "TestDeployer".to_string(),
+            ProviderGroup {
+                output_name: "TestDeployer".to_string(),
+                role_arn: Some("arn:aws:iam::123456789012:role/Test".to_string()),
+                blocks: vec![block],
+            },
+        );
+
+        let config = create_test_config(groups);
+        let result = matcher.resolve(&config).unwrap();
+
+        // No permissions should be added — group should be empty
+        assert!(result.groups.is_empty());
     }
 }

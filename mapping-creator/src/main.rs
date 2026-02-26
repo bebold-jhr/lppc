@@ -10,15 +10,20 @@ mod ui;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use log::{debug, info};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use action::{compute_selected_actions, get_preselected_indices, load_service_actions};
+use block_type::BlockType;
 use cli::Args;
 use generator::{generate_files, print_success_message, GeneratorConfig};
 use provider_versions::resolve_provider_versions;
 use schema::{filter_unmapped_types, get_available_block_types, load_terraform_types};
 use service::{extract_service_hint, find_best_match, load_service_references};
-use ui::{select_actions, select_block_type, select_service_prefix, select_terraform_type};
+use ui::{
+    prompt_skip_reason, select_actions, select_block_type, select_service_prefix,
+    select_terraform_type, ServicePrefixSelection,
+};
 
 fn main() {
     if let Err(err) = run() {
@@ -74,7 +79,18 @@ fn run() -> Result<()> {
         debug!("No matching service found for hint");
     }
 
-    let selected_service = select_service_prefix(services, preselected_index)?;
+    let service_selection = select_service_prefix(services, preselected_index)?;
+
+    let selected_service = match service_selection {
+        ServicePrefixSelection::Skip => {
+            let reason = prompt_skip_reason()?;
+            create_skip_file(&working_dir, block_type, &terraform_type, &reason)?;
+            println!("Skipped type: {}", terraform_type);
+            return Ok(());
+        }
+        ServicePrefixSelection::Service(service) => service,
+    };
+
     info!("Selected service prefix: {}", selected_service.service);
 
     let service_actions = load_service_actions(&working_dir, &selected_service.service)?;
@@ -129,6 +145,43 @@ fn run() -> Result<()> {
     let generated_files = generate_files(&config)?;
     print_success_message(&generated_files);
 
+    Ok(())
+}
+
+fn is_valid_terraform_type(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+        && !name.starts_with('.')
+        && !name.contains("..")
+}
+
+fn create_skip_file(
+    working_dir: &Path,
+    block_type: BlockType,
+    terraform_type: &str,
+    reason: &str,
+) -> Result<()> {
+    if !is_valid_terraform_type(terraform_type) {
+        bail!(
+            "Invalid terraform type: contains disallowed characters: {}",
+            terraform_type
+        );
+    }
+
+    let skip_path = working_dir
+        .join(block_type.mapping_dir())
+        .join(format!("{}.skip", terraform_type));
+
+    if skip_path.exists() {
+        bail!("Skip file already exists: {}", skip_path.display());
+    }
+
+    fs::write(&skip_path, reason)
+        .with_context(|| format!("Failed to write skip file: {}", skip_path.display()))?;
+
+    debug!("Created skip file: {}", skip_path.display());
     Ok(())
 }
 
