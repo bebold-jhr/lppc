@@ -261,7 +261,6 @@ provider "aws" {
   }
 }
 
-
 ####
 # Perform tests
 ####
