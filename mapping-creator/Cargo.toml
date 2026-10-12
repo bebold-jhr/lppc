@@ -14,7 +14,7 @@ serde_json = "1.0.149"
 ratatui = "0.30.0"
 crossterm = "0.29.0"
 ureq = "3.2.0"
-saphyr = "0.0.6"
+saphyr = "0.2.0"
 dirs = "6.0.0"
 chrono = { version = "0.4.43", features = ["serde"] }
 
