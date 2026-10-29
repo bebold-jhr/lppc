@@ -38,7 +38,7 @@ serde_json = "1.0.149"
 saphyr = "0.0.6"
 
 # Milestone 9: HCL parsing (replacing terraform plan dependency)
-hcl-rs = "0.19.5"
+hcl-rs = "0.20.0"
 
 [dev-dependencies]
 assert_cmd = "2.1.2"
